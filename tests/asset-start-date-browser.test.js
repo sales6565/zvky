@@ -44,16 +44,46 @@ const cut = (fromText, toText, what) => {
   return PAGE.slice(from, to);
 };
 
-/* The two button expressions, taken out of openDrawer by their own text. If
-   either is reworded in the page this throws rather than silently testing a
-   fixture that no longer matches what ships. */
+/* THE TWO BUTTON EXPRESSIONS, TAKEN OUT OF openDrawer WHOLE.
+ *
+ * TO THE SEMICOLON, NOT TO THE END OF THE LINE, and that is the whole of this
+ * function. It read `/^ {2}const canStart = .*$/m` and a mutation battery broke
+ * it in one move: adding a start-date term on a CONTINUATION line left the lift
+ * taking only the first line, so the fixture tested an expression the page does
+ * not have and the mutation survived. A multi-line condition is exactly how
+ * somebody would add a term back.
+ *
+ * The terminator is asserted, so a lift that ran off the end of the declaration
+ * fails here rather than producing a fixture that silently does not parse. */
 function buttonRules() {
-  const canStart = PAGE.match(/^ {2}const canStart = .*$/m);
-  const startBlocked = PAGE.match(/^ {2}const startBlocked = .*$/m);
-  assert.ok(canStart, 'found the canStart expression');
-  assert.ok(startBlocked, 'found the startBlocked expression');
-  return `${canStart[0]}\n${startBlocked[0]}`;
+  const take = (name) => {
+    const at = PAGE.indexOf(`  const ${name} = `);
+    assert.ok(at !== -1, `found the ${name} expression`);
+    const end = PAGE.indexOf(';\n', at);
+    assert.ok(end > at, `${name} is terminated`);
+    const text = PAGE.slice(at, end + 1);
+    assert.ok(text.trim().endsWith(';'), `${name} was lifted whole`);
+    /* And it really is one declaration, not a run-on into the next few. */
+    assert.ok(!/\n\s*const /.test(text), `${name}'s lift swallowed the next declaration`);
+    return text;
+  };
+  return `${take('canStart')}\n${take('startBlocked')}`;
 }
+
+test('the lifted button expressions are the whole declarations', () => {
+  /* A POSITIVE CONTROL on the lift above. Without it, a lift that silently
+     truncates passes every behavioural case in this file — which is how the
+     single-line regex it replaced went unnoticed. */
+  const rules = buttonRules();
+  assert.match(rules, /const canStart = /);
+  assert.match(rules, /const startBlocked = /);
+  assert.strictEqual((rules.match(/;/g) || []).length, 2,
+    'each expression should contribute exactly one statement');
+  assert.ok(rules.includes('!blocked') && rules.includes('!owing'),
+    'the two reasons that still close the button are in the lift');
+  assert.ok(!/start_date|due_date/.test(rules),
+    'a date term is back in the button state');
+});
 
 function fixture() {
   const fmtDay = cut('function fmtDay(value){', '\n}\n', 'fmtDay') + '\n}';
