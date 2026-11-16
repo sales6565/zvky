@@ -33,6 +33,18 @@
  *   8. THE FORCED CHANGE refuses the default and the previous password.
  *   9. THE EXPIRY works, with the clock controlled, and 0 means never.
  *  10. PERMISSION GATING on every route of the section.
+ *  11. NOT IN WHAT THE SERVER LOGS. The server's own stdout and stderr, for the
+ *      whole life of the suite, are searched for the value too.
+ *
+ *      This one was added because a mutation went uncaught. Making
+ *      src/routes/users.js print the resolved default to the console broke
+ *      nothing: the scans above read responses, tracked files and the database,
+ *      and a console line is in none of the three. A shared password in the
+ *      process log is a real leak -- on this deployment it goes to the cPanel
+ *      Node log, which is readable by anyone with the hosting account and is
+ *      kept after the password has been changed -- so the gap was in the suite,
+ *      not in the mutation. tests/helpers.js already captured the output; it
+ *      simply had nobody reading it.
  */
 const test = require('node:test');
 const assert = require('node:assert');
@@ -468,6 +480,25 @@ test('the configured default, end to end', { skip: cfg ? false : SKIP_REASON }, 
         assert.ok(!line.includes(value),
           `${label} appeared in a response: ${line.slice(0, 200)}`);
       }
+    }
+  });
+
+  await t.test('the value is in nothing the server logged', () => {
+    /* THE PROCESS LOG. startServer pipes the child's stdout and stderr into one
+       buffer and hands it over as output(); everything the server has printed
+       since it booted is in here, which includes every request this suite made.
+
+       The length guard is the same idea as the one above: an empty buffer would
+       satisfy a search for anything, so the scan has to be shown to be reading
+       something first. A booted server has printed its migration steps, so this
+       is comfortably met -- it fails only if the capture itself breaks. */
+    const log = server.output();
+    assert.ok(log.length > 200, `only ${log.length} bytes of server log were captured`);
+    for (const [label, value] of [['the first value', SECRET], ['the second', SECRET_TWO],
+      ['the encryption key', ENC_KEY]]) {
+      const at = log.indexOf(value);
+      assert.strictEqual(at, -1,
+        `${label} was logged by the server, near: ${JSON.stringify(log.slice(Math.max(0, at - 120), at + 80))}`);
     }
   });
 
