@@ -4526,6 +4526,18 @@ const SETTINGS_SECTIONS = [
   { permission:'settings.project_categories', label:'Project Categories', heading:'Project Categories', note:'The Category dropdown on a project. A separate list from the asset one.' },
   { permission:'settings.milestone_types', label:'Milestone Types', heading:'Milestone Types', note:'The stages a project can be planned in — Art, Animation, and whatever the studio adds.' },
   { permission:'settings.roles',        label:'Roles',            heading:'Roles',            note:'The studio\'s designations and what each one can do.' },
+  /* THE DEFAULT AN ADMIN RESET GIVES OUT. Listed with the account-security
+     cluster below it — the two IP lists and the mail credentials — rather than
+     with the value lists, because what it governs is who can get into an
+     account rather than what a dropdown offers.
+
+     ITS OWN KEY, settings.default_password: Super Admin by default, and
+     grantable, so a studio can give it to the two or three people who run
+     accounts without giving them the role screen. The Super Admin holds it
+     whatever the stored rows say — rolePermissions.effectiveFor short-circuits
+     that tier to the whole catalogue and setForRole cannot write it away — which
+     is why this entry needs no tier fallback beside can(). */
+  { permission:'settings.default_password', label:'Password reset', heading:'Password reset', note:'The one default password an administrator reset gives somebody, how long it stays valid, and whether they must choose a new one at next sign-in. The value is stored encrypted and is never shown again, to anybody.' },
   { permission:'settings.ip_allowlist', label:'IP Allowlist',     heading:'Allowed IP Addresses', note:'Which addresses may reach this application at all.' },
   { permission:'settings.ip_blocklist', label:'IP Blocklist',     heading:'Blocked IP Addresses', note:'Addresses barred outright, whatever else allows them.' },
   { permission:'settings.email_config', label:'Email Configuration', heading:'Email Configuration', note:'The mail server task notifications are sent through.' },
@@ -14455,16 +14467,24 @@ function showImportResult(data, ok, entity){
       <div style="font-size:12px;color:var(--ink-muted);margin-bottom:8px;">
         These rows were not imported. Everything else was. Fix them and upload just those rows again.
       </div>
-      ${data.temporaryPassword ? `<div style="font-size:12px;color:var(--ink-muted);margin-bottom:8px;">
-        New accounts without a password in the file were given <span class="mono" style="color:var(--ink);">${escapeHTML(data.temporaryPassword)}</span> — they should change it on first sign-in.
+      ${/* THE VALUE IS NOT PRINTED. This read `data.temporaryPassword` and
+             showed it in a mono box. The server stopped sending that field, so
+             since Prompt 70 this block has simply not rendered — dead copy
+             rather than a visible fault, which is why it survived the first
+             sweep. `usedDefault` says that some rows got the default. */''}
+      ${data.usedDefault ? `<div style="font-size:12px;color:var(--ink-muted);margin-bottom:8px;">
+        New accounts without a password in the file were given the studio's default password —
+        they must change it on first sign-in. It is set in Settings &rarr; Password reset and is
+        not shown here.
       </div>` : ''}
       <div class="import-errors">
         <table><thead><tr><th>Row</th><th>Column</th><th>Value</th><th>Problem</th></tr></thead>
         <tbody>${rows}</tbody></table>
       </div>` :
       `${warnings.length ? '' : '<div style="font-size:13px;color:var(--approved);">Every row imported successfully.</div>'}
-       ${data.temporaryPassword ? `<div style="font-size:12px;color:var(--ink-muted);margin-top:10px;">
-         New accounts were given the temporary password <span class="mono" style="color:var(--ink);">${escapeHTML(data.temporaryPassword)}</span> — they should change it on first sign-in.
+       ${data.usedDefault ? `<div style="font-size:12px;color:var(--ink-muted);margin-top:10px;">
+         New accounts were given the studio's default password — they must change it on first
+         sign-in. It is set in Settings &rarr; Password reset and is not shown here.
        </div>` : ''}`}
     ${warnings.length ? `
       <div style="font-size:12px;color:var(--ink-muted);margin:0 0 8px;">
@@ -15719,6 +15739,11 @@ async function renderSettings(){
     ${can('settings.asset_rename') ? '<div id="assetNamesSection"></div>' : ''}
     ${can('settings.mis_access') ? '<div id="misAccessSection"></div>' : ''}
     ${can('settings.working_hours') ? '<div id="scheduleSection"></div>' : ''}
+    ${/* THE STABLE ID IS ON THE CONTAINER, so a test can ask for it by name and
+           get null for a role without the key — which is exactly the gating this
+           section needs to prove. The .ref-section inside carries the
+           <h3>Password reset</h3> that the accordion keys off. */''}
+    ${can('settings.default_password') ? '<div id="settings-password-reset"></div>' : ''}
     ${can('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
     ${can('settings.ip_blocklist') ? '<div id="ipBlocklistSection"></div>' : ''}
     ${can('settings.email_config') ? '<div id="emailConfigSection"></div>' : ''}
@@ -15760,6 +15785,9 @@ async function renderSettings(){
   /* Managing who may reach the app stays with whoever has been given that one
      permission — it is not implied by holding the rest of this screen. The API
      refuses it regardless; hiding it keeps the screen honest about the offer. */
+  /* Beside the two IP lists and the mail credentials, which is where it sits on
+     the page: all four decide who can get into something. */
+  if(can('settings.default_password')) await renderPasswordResetSettings();
   if(can('settings.ip_allowlist')) await renderIpAllowlist();
   /* Its own permission again, and a narrower one: blocking is Super Admin only
      by default. Drawn below the allowlist, which is the reverse of the order the
@@ -21803,6 +21831,230 @@ async function renderAssetNameSettings(){
   };
 }
 
+/* ---------- Settings -> Password reset ----------
+ *
+ * THE SECTION THAT WAS MISSING. Prompt 70 built the module, the routes, the
+ * catalogue key and the migration, and never built this — so the owner opened
+ * Settings as Super Admin and found nothing, because there was nothing to find.
+ * Everything below the page was working the whole time.
+ *
+ * WHAT IT SHOWS, AND THE ONE THING IT CANNOT.
+ *
+ * The two switches and the expiry are ordinary saved fields. The default
+ * password is WRITE-ONLY: the panel shows whether one is set and when it last
+ * changed, and there is no control, button or state that reveals it — not to a
+ * Super Admin, not to the person who typed it a minute ago. That is a decision
+ * and not a feature left unbuilt: a value that can be read back is a value that
+ * leaks through whoever is holding the screen, and the way to learn it is to
+ * set it again. The server has no route that unseals it either, which is what
+ * makes this honest rather than cosmetic.
+ *
+ * THE FIELD IS CLEARED AFTER A SAVE. It holds a live credential while somebody
+ * types, so leaving it populated would put the value in the DOM for as long as
+ * the tab stayed open, where the next person at that desk could read it out of
+ * the input.
+ */
+const prSetState = { data: null, errors: [], busy: false, note: null };
+
+async function renderPasswordResetSettings(){
+  const el = document.getElementById('settings-password-reset');
+  if(!el) return;
+  if(!prSetState.data){
+    try{ prSetState.data = await api('/admin/settings/password-reset'); }
+    catch(err){ el.innerHTML = `<div class="ref-section"><div class="ref-head"><h3>Password reset</h3></div>
+      <div class="ref-err">${escapeHTML(err.message)}</div></div>`; return; }
+  }
+  const s = prSetState.data.settings;
+  const errFor = (f)=>{ const e = prSetState.errors.find(x=>x.field===f); return e ? e.message : ''; };
+  /* The rules, from the server's own policy, so the field ticks them off while
+     somebody types rather than after a round trip. The same list the change
+     form draws — this section is handed it on the settings payload so it does
+     not need a second request. */
+  const rules = (s.policy && s.policy.rules) || [];
+
+  el.innerHTML = `
+    <div class="ref-section" id="prSetSection">
+      <div class="ref-head"><h3>Password reset</h3><span class="rh-badge">Super Admin</span></div>
+      <div class="ref-note">When an administrator resets somebody's password, the account is set to
+        <strong>one default password</strong> that you choose here, and the person changes it
+        afterwards. The value is stored encrypted and <strong>is never shown again</strong> —
+        not on this screen, not in the activity log, not in any answer this server gives, and not
+        to you. Changing it is the only way to learn what it is.</div>
+
+      <div class="ref-add">
+        <div style="align-self:end;">
+          <label class="rh-check"><input type="checkbox" id="pr_use"${s.useDefault?' checked':''}>
+            Reset passwords to the default password</label>
+        </div>
+        <div style="align-self:end;">
+          <label class="rh-check"><input type="checkbox" id="pr_force"${s.forceChange?' checked':''}>
+            Require a new password at next login after a reset</label>
+        </div>
+        <div>
+          <label>Default password stays valid for (hours)</label>
+          <input type="number" id="pr_hours" class="narrow${errFor('validHours')?' rh-bad':''}"
+                 min="${Number(s.hours.min)}" max="${Number(s.hours.max)}" step="1"
+                 value="${escapeHTML(String(s.validHours))}">
+          <div style="font-size:11px;color:var(--ink-faint);margin-top:4px;">
+            ${Number(s.hours.min)}–${Number(s.hours.max)}. 0 means it never expires.</div>
+        </div>
+        <div style="align-self:end;">
+          <button class="btn btn-brand" id="pr_save">Save</button>
+        </div>
+      </div>
+
+      ${/* THE WRITE-ONLY FIELD. Its own row, its own button, so a request that
+             changes a switch cannot carry a password and a request that carries
+             a password cannot quietly change a switch — which is how the two
+             server routes are split as well. */''}
+      <div class="ref-add" style="margin-top:4px;">
+        <div>
+          <label for="pr_value">Default password</label>
+          <input type="password" id="pr_value" autocomplete="new-password"
+                 class="${errFor('defaultPassword')?' rh-bad':''}" placeholder="Type a new default">
+          ${/* THE SAME MARKUP AND THE SAME CLASSES THE CHANGE FORM USES —
+                 ul.pw-rules > li.met > span.tick, which is what the stylesheet
+                 at .pw-rules li .tick is written for. My first pass invented
+                 rh-rules/rh-rule/rh-tick, which have no CSS anywhere and would
+                 have drawn an unstyled list. */''}
+          <ul class="pw-rules" id="pr_rules" style="margin-top:6px;">
+            ${rules.map(r=>`<li data-rule="${escapeHTML(r.id)}">
+              <span class="tick">○</span>${escapeHTML(r.label)}</li>`).join('')}
+          </ul>
+        </div>
+        <div style="align-self:end;">
+          <button class="btn btn-brand" id="pr_set">Set default password</button>
+        </div>
+        ${s.defaultSet ? `<div style="align-self:end;">
+          <button class="btn btn-ghost" id="pr_clear">Clear it</button>
+        </div>` : ''}
+      </div>
+
+      ${prSetState.errors.length ? `<div class="rh-errs">${prSetState.errors
+        .map(e=>`<div class="rh-err">${escapeHTML(e.message)}</div>`).join('')}</div>` : ''}
+
+      <div class="rh-warn" style="border-color:var(--border);background:var(--surface);">
+        <div><strong>A shared default is weaker than a one-off, and three things narrow that.</strong>
+        While the account must change its password the app answers nothing else, so the default
+        cannot be used to work; the expiry above stops it working at all after a while; and the
+        value is never written into a log, a notification or an email. What remains: anybody who
+        knows the default and somebody's email can take over a just-reset account before its owner
+        signs in. Tell the person promptly, and keep the expiry short.</div>
+      </div>
+
+      <div class="ref-note" id="pr_now">
+        ${/* SET OR NOT SET, AND WHEN. Never the value, and never its length —
+               a field that reported "12 characters" would narrow a guess. */''}
+        ${s.defaultSet
+          ? `A default password <strong>is set</strong>${s.defaultSetAt
+              ? `, last changed ${escapeHTML(fmtDate(s.defaultSetAt))}` : ''}.`
+          : 'No default password is set.'}
+        ${s.source === 'environment'
+          ? '<br>This server is using <strong>DEFAULT_USER_PASSWORD</strong> from its environment. '
+            + 'Setting one here replaces it, and is the only way to change it without a deploy.'
+          : ''}
+        ${s.fallbackNote ? `<br>${escapeHTML(s.fallbackNote)}` : ''}
+        ${!s.encryptionAvailable
+          ? '<br><strong>This server has no EMAIL_ENCRYPTION_KEY</strong>, so a default cannot be '
+            + 'stored here at all. JWT_SECRET is deliberately not accepted for a stored password.'
+          : ''}
+        ${!s.useDefault && s.defaultSet
+          ? '<br>The switch above is off, so resets are <strong>not</strong> using this value.'
+          : ''}
+        ${s.updatedByName ? `<br>Last changed by ${escapeHTML(s.updatedByName)}.` : ''}
+      </div>
+    </div>`;
+
+  /* THE CHECKLIST, LIVE, THROUGH THE PAGE'S OWN checkRule().
+   *
+   * One copy of the rule logic: checkRule() is what the change-password form
+   * ticks with, and a second implementation here would be a second answer to
+   * "does this meet the policy" — the shape of bug this codebase has been
+   * bitten by repeatedly.
+   *
+   * checkRule() reads the module-level `passwordPolicy`, which is fetched by
+   * the change-password modal and is therefore usually NULL on this screen:
+   * nobody opening Settings has been through that form. The settings payload
+   * already carries the same object (the route hands over policy.describe()),
+   * so it is seeded from there rather than fetched again — which also warms it
+   * for the change form. */
+  if(!passwordPolicy && s.policy) passwordPolicy = s.policy;
+  const field = document.getElementById('pr_value');
+  const paintRules = ()=>{
+    const pw = field.value;
+    el.querySelectorAll('#pr_rules li').forEach(row=>{
+      const met = Boolean(pw) && Boolean(passwordPolicy) && checkRule(row.dataset.rule, pw);
+      row.classList.toggle('met', met);
+      row.querySelector('.tick').textContent = met ? '✓' : '○';
+    });
+  };
+  field.addEventListener('input', paintRules);
+  paintRules();
+
+  document.getElementById('pr_save').onclick = async ()=>{
+    if(prSetState.busy) return;
+    prSetState.busy = true;
+    try{
+      prSetState.data = await api('/admin/settings/password-reset', { method:'PUT', body:{
+        useDefault: document.getElementById('pr_use').checked,
+        forceChange: document.getElementById('pr_force').checked,
+        validHours: Number(document.getElementById('pr_hours').value),
+      } });
+      prSetState.errors = [];
+      showToast('Password reset settings saved.');
+    }catch(err){
+      prSetState.errors = [{ field: err.field || null, message: err.message }];
+    }finally{ prSetState.busy = false; }
+    renderPasswordResetSettings();
+  };
+
+  document.getElementById('pr_set').onclick = async ()=>{
+    if(prSetState.busy) return;
+    const value = field.value;
+    if(!value){
+      prSetState.errors = [{ field:'defaultPassword', message:'Type the default password.' }];
+      renderPasswordResetSettings();
+      return;
+    }
+    prSetState.busy = true;
+    try{
+      prSetState.data = await api('/admin/settings/password-reset/default', {
+        method:'PUT', body:{ defaultPassword: value } });
+      prSetState.errors = [];
+      /* CLEARED, so the value is not sitting in the DOM for the rest of the
+         session. The field is re-rendered empty below in any case; this is the
+         belt to that braces for the moment between. */
+      field.value = '';
+      showToast('Default password set. It is not shown again.');
+    }catch(err){
+      prSetState.errors = [{ field: err.field || 'defaultPassword', message: err.message }];
+    }finally{ prSetState.busy = false; }
+    renderPasswordResetSettings();
+  };
+
+  const clear = document.getElementById('pr_clear');
+  if(clear) clear.onclick = async ()=>{
+    if(prSetState.busy) return;
+    /* askConfirm, which is this page's in-page dialog — NOT a native confirm()
+       (the desktop web view has none) and not a helper called confirmModal,
+       which I wrote first and which does not exist. It takes `message`. */
+    if(!await askConfirm({
+      title: 'Clear the default password?',
+      message: 'Administrator resets will stop working until a new one is set, or until this server '
+        + 'is started with DEFAULT_USER_PASSWORD. Nobody\'s current password changes.',
+      confirmLabel: 'Clear it', danger: true })) return;
+    prSetState.busy = true;
+    try{
+      prSetState.data = await api('/admin/settings/password-reset/default', { method:'DELETE' });
+      prSetState.errors = [];
+      showToast('Default password cleared.');
+    }catch(err){
+      prSetState.errors = [{ field: null, message: err.message }];
+    }finally{ prSetState.busy = false; }
+    renderPasswordResetSettings();
+  };
+}
+
 async function renderChatSettings(){
   const el = document.getElementById('chatSettingsSection');
   if(!el) return;
@@ -24331,10 +24583,12 @@ function openResetPassword(id, name){
   document.getElementById('rp_title').textContent = `Reset password for ${name}`;
   document.getElementById('rp_err').textContent = '';
   document.getElementById('rp_body').innerHTML = `
-    <p>This gives ${escapeHTML(name)} a temporary password and signs out every device they are
-      signed in on. They will have to choose a new password before they can use the app again.</p>
-    <p>They are given the studio's standing password, shown on the next screen, to pass on to them.
-      You will never see the password they then choose.</p>`;
+    <p>This sets ${escapeHTML(name)}'s password to the studio's <strong>default password</strong>
+      and signs out every device they are signed in on. They will have to choose a new password
+      before they can use the app again.</p>
+    <p>The default is not shown here or anywhere else — a Super Admin sets it in
+      <strong>Settings &rarr; Password reset</strong>. You will never see the password
+      ${escapeHTML(name)} then chooses.</p>`;
   const confirm = document.getElementById('rp_confirm');
   confirm.style.display = '';
   confirm.disabled = false;
@@ -24359,19 +24613,36 @@ document.getElementById('rp_confirm').addEventListener('click', async ()=>{
     btn.disabled = false; btn.textContent = 'Reset password';
     return;
   }
-  document.getElementById('rp_title').textContent = `Temporary password for ${resetPwTarget.name}`;
+  /* NO PASSWORD ON THIS SCREEN ANY MORE, AND IT WAS PRINTING "undefined".
+   *
+   * This step existed to hand the value over: it rendered
+   * `escapeHTML(res.temporaryPassword)` in a big box. The server stopped
+   * returning that field, so between Prompt 70 and this fix an administrator
+   * pressing Reset password got a panel displaying the word "undefined" where
+   * the credential used to be — the reset itself worked, which is what made it
+   * look like the feature was broken rather than the copy.
+   *
+   * WHAT IT SAYS INSTEAD is the server's own sentence, which names the default
+   * without quoting it. Whoever is doing the reset already knows the studio's
+   * default or can set it in Settings; the one thing this screen must not do is
+   * put a live credential on a monitor. */
+  document.getElementById('rp_title').textContent = `Password reset for ${resetPwTarget.name}`;
   document.getElementById('rp_body').innerHTML = `
-    <p>Give ${escapeHTML(resetPwTarget.name)} this password.</p>
-    <div class="temp-pw" id="rp_value">${escapeHTML(res.temporaryPassword)}</div>
-    <p>${escapeHTML(res.message || '')}</p>
+    <p>${escapeHTML(res.message || 'Password reset to the default password. Tell the user to sign in and change it.')}</p>
+    ${res.mustChange === false
+      ? `<p style="color:var(--ink-faint);">This studio does not require a new password at next
+           sign-in, so ${escapeHTML(resetPwTarget.name)} can work with the default until it
+           expires.</p>`
+      : `<p style="color:var(--ink-faint);">${escapeHTML(resetPwTarget.name)} cannot use the app
+           until they choose a new password, and every device they were signed in on has been
+           signed out.</p>`}
     <!-- Said here rather than only in the manual, because this is the screen
-         somebody is looking at when it matters. The account is locked to a
-         password change, so this cannot be used to work — but it can be used
-         to make that change, which is why the window matters. -->
-    <p style="color:var(--ink-faint);">This is the studio's standing password, the same one every
-      new account starts with. It is not unique to ${escapeHTML(resetPwTarget.name)} and is not a
-      secret, so tell them promptly: until they choose a new one, anybody who knows this password
-      and their email address could set it for them.</p>`;
+         somebody is looking at when it matters. -->
+    <p style="color:var(--ink-faint);">The default is not unique to
+      ${escapeHTML(resetPwTarget.name)} and is not a secret, so tell them promptly: until they
+      choose a new one, anybody who knows the default and their email address could set it for
+      them. It is shown nowhere — a Super Admin can replace it in
+      <strong>Settings &rarr; Password reset</strong>.</p>`;
   btn.style.display = 'none';
   document.getElementById('rp_cancel').textContent = 'Done';
   showToast(`Password reset for ${resetPwTarget.name}.`);
@@ -25562,6 +25833,24 @@ function reapplyPermissionGates({ redrawProjects = true } = {}){
      permanently, each decided by the same shared rule from the server's
      inReach — so the rows are refetched rather than re-judged locally. */
   if(redrawProjects && state.view==='projects') renderProjects();
+  /* AND SETTINGS, WHOSE WHOLE CONTENTS ARE DECIDED BY THE PERMISSION SET.
+   *
+   * Every section on that screen is `can(key) ? <container> : ''`, so granting
+   * somebody a settings key adds a section and revoking one takes it away —
+   * and neither reached an open Settings tab, because this function only ever
+   * re-applied the gate TABLE and that table has no entry for a section. A
+   * Super Admin who granted Password reset to a role sat watching a screen that
+   * would not change until the other person navigated.
+   *
+   * THE CACHES GO WITH IT. Each section keeps its fetched payload in a module
+   * state object and returns early when it is already there, so a redraw alone
+   * would repaint the sections that were already on screen and leave a newly
+   * granted one blank. Dropping them is cheap — this only runs on a tick where
+   * the permission set actually moved. */
+  if(state.view==='settings'){
+    prSetState.data = null;
+    renderSettings();
+  }
   if(state.openAssetId && document.getElementById('drawer').classList.contains('show')){
     openDrawer(state.openAssetId);
   }
