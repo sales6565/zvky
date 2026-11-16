@@ -435,23 +435,37 @@ router.post('/password', authenticate, async (req, res) => {
   const { rows } = await db.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
   if (!rows.length) return res.status(401).json({ error: 'This account no longer exists' });
 
-  /* NOR THE ONE IT IS REPLACING.
+  /* NOR THE ONE IT IS REPLACING — AND THAT IS THE STRING COMPARISON ABOVE,
+   * NOT A SECOND CHECK HERE.
    *
-   * `newPassword === currentPassword` above catches the ordinary case, and it
-   * is not enough on the forced path: somebody whose password was reset types
-   * the default as the current one, so the string they must not reuse is the
-   * stored hash's, which is the default — already refused just above — AND, for
-   * anybody arriving here normally, whatever they are actually signed in with.
-   * Compared against the HASH rather than against a string, because that is the
-   * only form of the previous password this server has. */
-  const reusesPrevious = await bcrypt.compare(String(newPassword), rows[0].password_hash);
-  if (reusesPrevious) {
-    return res.status(400).json({
-      error: 'Your new password must be different from your current one.',
-      field: 'newPassword',
-      code: 'IS_PREVIOUS_PASSWORD',
-    });
-  }
+   * There was a second check here: bcrypt.compare(newPassword, password_hash),
+   * on the reasoning that the forced path needs the HASH compared because the
+   * string the account must not reuse is the default it was just given. That
+   * reasoning was wrong, and the mutation battery is what showed it — disabling
+   * the check broke no test, because nothing could reach it.
+   *
+   * The proof is two lines of this handler. `newPassword === currentPassword`
+   * above answers 400 before anything else runs, and the change below proceeds
+   * only once bcrypt.compare(currentPassword, password_hash) is true. For a
+   * hash compare on newPassword to add anything, newPassword would have to
+   * match the stored hash while differing from currentPassword as a string —
+   * and if both match one hash they are the same plaintext, so they do not
+   * differ. After the current-password gate the check is unreachable.
+   *
+   * BEFORE that gate, which is where it sat, it was reachable by exactly one
+   * kind of request: a WRONG current password together with the account's real
+   * password as the new one. It answered those 400 "must be different from your
+   * current one" where every other wrong current password gets 403 "not
+   * correct" — which told a caller who did not know the password that the value
+   * they had just typed was it. Anyone holding a stolen token could have
+   * confirmed password guesses one at a time against this endpoint and walked
+   * away with the plaintext, which outlives the token they arrived with.
+   *
+   * So there is one rule, in one place, and the test below pins the answer a
+   * wrong current password gets regardless of what the new one happens to be.
+   * The default is refused on its own terms just above; the password from
+   * before a reset is not refused by anybody, because this server keeps no
+   * password history and cannot recognise it. */
 
   const matches = await bcrypt.compare(currentPassword, rows[0].password_hash);
   if (!matches) {

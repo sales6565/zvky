@@ -338,6 +338,41 @@ test('the configured default, end to end', { skip: cfg ? false : SKIP_REASON }, 
       body: { currentPassword: chosen, newPassword: chosen, confirmPassword: chosen } }));
     assert.strictEqual(same.status, 400);
     assert.match(same.body.error, /different from your current/i);
+
+    /* AND A WRONG CURRENT PASSWORD GETS THE SAME ANSWER WHATEVER THE NEW ONE IS.
+     *
+     * This is the case a check I had written answered differently, and the
+     * mutation battery is how it surfaced: disabling that check broke nothing,
+     * because for an honest caller it could not fire at all. The one kind of
+     * request it did answer was this one -- a wrong current password together
+     * with the account's REAL password as the new one -- and it answered 400
+     * "must be different from your current one" where every other wrong current
+     * password gets 403. That difference is readable by whoever sent it, so a
+     * stolen token could confirm password guesses here one at a time and come
+     * away with the plaintext, which outlives the token.
+     *
+     * Both halves are asserted: the right answer, and the absence of the wrong
+     * one. Asserting only the status would pass again the moment some future
+     * check answered 403 with a body that still gave the game away. */
+    const oracle = await watch('wrong current, new = the real one',
+      as('ana', '/auth/password', { method: 'POST',
+        body: { currentPassword: 'Not-Her-Password-1!', newPassword: chosen, confirmPassword: chosen } }));
+    const control = await watch('wrong current, new = something else',
+      as('ana', '/auth/password', { method: 'POST',
+        body: { currentPassword: 'Not-Her-Password-1!', newPassword: 'Unrelated-Choice-4!',
+          confirmPassword: 'Unrelated-Choice-4!' } }));
+    assert.strictEqual(oracle.status, 403, JSON.stringify(oracle.body));
+    assert.strictEqual(control.status, 403, JSON.stringify(control.body));
+    assert.deepStrictEqual(oracle.body, control.body,
+      'a wrong current password must not be answered differently when the new password '
+      + 'happens to be the account\'s real one -- that difference is a password oracle');
+    assert.doesNotMatch(oracle.body.error, /different from your current/i);
+    assert.ok(!JSON.stringify(oracle.body).includes(chosen), 'and it does not quote what was sent');
+
+    /* The account is still hers, with the password she chose: four refusals in a
+       row changed nothing. */
+    assert.strictEqual((await login('ana@pw.test', chosen)).status, 200,
+      'the refusals left her password alone');
   });
 
   await t.test('the force-change switch off: reset, no lock', async () => {
