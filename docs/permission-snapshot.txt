@@ -6,7 +6,7 @@
 # A deliberate change to anybody's visibility is made by regenerating this
 # file, so it lands in the diff where a reviewer will see it.
 #
-# roles: 60   routes: 303
+# roles: 60   routes: 306
 
 ## PAGE ELEMENTS  (UI_GATES, read from public/index.html)
 
@@ -125,6 +125,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = yes
   DELETE /api/branding/logo = yes
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = yes
@@ -202,6 +203,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = yes
   POST /api/branding/logo = yes
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -352,6 +354,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = yes
@@ -429,6 +432,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -579,6 +583,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -656,6 +661,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -806,6 +812,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -883,6 +890,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -1033,6 +1041,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -1110,6 +1119,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -1260,6 +1270,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -1337,6 +1348,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -1487,6 +1499,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -1564,6 +1577,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -1714,6 +1728,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -1791,6 +1806,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -1941,6 +1957,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -2018,6 +2035,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -2168,6 +2186,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -2245,6 +2264,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -2395,6 +2415,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -2472,6 +2493,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -2622,6 +2644,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -2699,6 +2722,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -2849,6 +2873,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -2926,6 +2951,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -3076,6 +3102,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -3153,6 +3180,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -3303,6 +3331,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -3380,6 +3409,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -3530,6 +3560,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -3607,6 +3638,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -3757,6 +3789,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -3834,6 +3867,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -3984,6 +4018,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -4061,6 +4096,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -4211,6 +4247,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -4288,6 +4325,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -4438,6 +4476,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -4515,6 +4554,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -4665,6 +4705,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -4742,6 +4783,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -4892,6 +4934,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -4969,6 +5012,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -5119,6 +5163,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -5196,6 +5241,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -5346,6 +5392,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -5423,6 +5470,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -5573,6 +5621,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -5650,6 +5699,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -5800,6 +5850,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -5877,6 +5928,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -6027,6 +6079,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = yes
   DELETE /api/branding/logo = yes
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = yes
@@ -6104,6 +6157,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = yes
   POST /api/branding/logo = yes
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -6254,6 +6308,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = yes
   DELETE /api/branding/logo = yes
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = yes
@@ -6331,6 +6386,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = yes
   POST /api/branding/logo = yes
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -6481,6 +6537,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = yes
   DELETE /api/branding/logo = yes
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = yes
@@ -6558,6 +6615,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = yes
   POST /api/branding/logo = yes
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -6708,6 +6766,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = yes
   DELETE /api/branding/logo = yes
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = yes
@@ -6785,6 +6844,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = yes
   POST /api/branding/logo = yes
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -6935,6 +6995,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = yes
   DELETE /api/branding/logo = yes
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = yes
@@ -7012,6 +7073,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = yes
   POST /api/branding/logo = yes
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -7162,6 +7224,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -7239,6 +7302,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -7389,6 +7453,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -7466,6 +7531,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -7616,6 +7682,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -7693,6 +7760,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -7843,6 +7911,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -7920,6 +7989,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -8070,6 +8140,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -8147,6 +8218,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -8297,6 +8369,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -8374,6 +8447,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -8524,6 +8598,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -8601,6 +8676,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -8751,6 +8827,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -8828,6 +8905,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -8978,6 +9056,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -9055,6 +9134,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -9205,6 +9285,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -9282,6 +9363,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -9432,6 +9514,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -9509,6 +9592,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -9659,6 +9743,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -9736,6 +9821,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -9886,6 +9972,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -9963,6 +10050,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -10113,6 +10201,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -10190,6 +10279,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -10340,6 +10430,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -10417,6 +10508,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -10567,6 +10659,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -10644,6 +10737,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -10794,6 +10888,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -10871,6 +10966,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -11021,6 +11117,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -11098,6 +11195,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -11248,6 +11346,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -11325,6 +11424,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -11475,6 +11575,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -11552,6 +11653,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -11702,6 +11804,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -11779,6 +11882,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -11929,6 +12033,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -12006,6 +12111,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -12156,6 +12262,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -12233,6 +12340,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -12383,6 +12491,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = yes
   DELETE /api/branding/logo = yes
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = yes
@@ -12460,6 +12569,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = yes
   POST /api/branding/logo = yes
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -12610,6 +12720,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -12687,6 +12798,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -12837,6 +12949,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -12914,6 +13027,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -13064,6 +13178,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -13141,6 +13256,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -13291,6 +13407,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -13368,6 +13485,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes
@@ -13518,6 +13636,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
   DELETE /api/clients/:id = no
@@ -13595,6 +13714,7 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
   POST /api/chat/:id/members = yes

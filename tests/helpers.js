@@ -71,6 +71,11 @@ async function startServer(cfg, extraEnv = {}, attempt = 0) {
       CORS_ORIGIN: `http://localhost:${port}`,
       LOGIN_RATE_MAX: '100000',
       PASSWORD_CHANGE_RATE_MAX: '100000',
+      /* The icon upload is limited to twenty an hour in production, which is
+         well above honest use and well below what a test suite does to a route
+         in a few seconds. Raised here like the two above; the suite that tests
+         the limiter sets its own low value. */
+      FAVICON_UPLOAD_RATE_MAX: '100000',
       // Start with no allowed addresses, which leaves the IP gate open — every
       // other suite connects from 127.0.0.1 and is not testing the gate. The
       // allowlist suite overrides this with the addresses it wants. Note this

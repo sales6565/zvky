@@ -30,6 +30,7 @@ const emailDeliveryRoutes = require('./routes/email-delivery');
 const reportRoutes = require('./routes/reports');
 const leaveRoutes = require('./routes/leave');
 const brandingRoutes = require('./routes/branding');
+const brandingIconRoutes = require('./routes/branding-icon');
 const themeRoutes = require('./routes/theme');
 const themeDelivery = require('./theme-delivery');
 const recordingHoursRoutes = require('./routes/recording-hours');
@@ -135,6 +136,35 @@ const passwordChangeLimiter = rateLimit({
 });
 app.use('/api/auth/password', passwordChangeLimiter);
 
+/* THE ICON UPLOAD.
+ *
+ * The brief asks for this to be limited "like other upload routes", and there
+ * was nothing to copy: as the note below says, nothing in this application was
+ * limited except sign-in and password changes, and that includes every existing
+ * upload -- the logo, avatars, thumbnails, chat attachments. So this is shaped
+ * like the three limiters here rather than like a precedent that does not
+ * exist, and the existing uploads are left alone: retrofitting limits onto them
+ * would change behaviour the studio relies on in a change that was asked to add
+ * an icon.
+ *
+ * Twenty an hour. Setting the studio's icon is something somebody does once,
+ * then twice more because the first export was the wrong size -- not something
+ * anybody does twenty times in an hour except by accident or on purpose. It
+ * covers the removal as well, which shares the path; both are writes behind the
+ * same permission, and a loop of either is the thing being bounded.
+ *
+ * Keyed per address like the others, which in an office that shares one address
+ * means the studio shares the allowance. That is the right trade here: the
+ * allowance is far above honest use, and the thing being protected is a route
+ * that reads half a megabyte and hashes it. */
+const iconUploadLimiter = rateLimit({
+  windowMs: Number(process.env.FAVICON_UPLOAD_RATE_WINDOW_MINUTES || 60) * 60 * 1000,
+  max: Number(process.env.FAVICON_UPLOAD_RATE_MAX || 20),
+  standardHeaders: true,
+  message: { error: 'Too many icon changes from this network. Try again shortly.' },
+});
+app.use('/api/branding/favicon', iconUploadLimiter);
+
 /* The integration API, which until now was the only part of this application
    with no limit on it at all: the two limiters above cover sign-in and password
    changes, and nothing else had any. An external caller retrying a failing job
@@ -189,6 +219,12 @@ app.use('/api/chat', chatRoutes);
    somebody may send their own. Separate mount, separate permission. */
 app.use('/api/chat-activity', chatActivityRoutes);
 app.use('/api/branding', brandingRoutes);
+/* THE TAB ICON, OFF /api DELIBERATELY. The head of the page points a browser at
+   it, so it is fetched before sign-in, from bookmarks and from pinned tabs, and
+   it carries no API concerns. The reasoning is at the top of the route file.
+   Ahead of the static handler and the single-page fallback, both of which would
+   otherwise answer this path with the page itself. */
+app.use('/branding', brandingIconRoutes);
 /* The theme stylesheet gets its own mount: app.use() matches whole path
    segments, so /api/theme.css would never reach the router mounted at
    /api/theme and would fall through to the SPA catch-all — answering a request

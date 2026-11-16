@@ -3879,6 +3879,59 @@ async function ensureBranding(db, log) {
   }
 }
 
+/* THE STUDIO'S UPLOADED IMAGES THAT ARE NOT THE LOGO — at present, the icon in
+ * the browser tab.
+ *
+ * A KEYED TABLE RATHER THAN MORE COLUMNS ON `branding`. The logo lives on that
+ * one row as logo/logo_mime/logo_updated_at, and the icon could have joined it
+ * as three more. It is a table instead for two reasons.
+ *
+ * The icon needs more than the logo ever did: a digest, so the URL can carry a
+ * version and a browser can be told to cache the file for a year; the
+ * dimensions, so the rules about size are checked once on upload rather than on
+ * every page load; the size in bytes and who changed it, for the Settings
+ * screen and the audit entry. That is six columns, and `branding` is a row
+ * about the studio's identity, not a cupboard.
+ *
+ * And REMOVING the icon has to mean "there is no icon" with no ambiguity. On a
+ * single row, removal is three columns set to NULL, and a half-cleared row — a
+ * mime with no bytes, bytes with no digest — is a state the serving route would
+ * have to defend against. Here, removal deletes the row, and the empty state is
+ * the absence of one, which is also the state a studio that never uploaded
+ * anything is in. One empty state, not two.
+ *
+ * ADDITIVE AND IDEMPOTENT. Nothing existing is read, written or altered: a
+ * deployment that runs this twice, or that already has the table, is unchanged,
+ * and the branding row keeps its name, tagline and logo either way.
+ *
+ * `asset_key`, not `key`, because `key` is reserved in MySQL and a query
+ * against it needs back-ticks forever after.
+ *
+ * MEDIUMBLOB, matching the logo column. The cap on an icon is 512KB, which fits
+ * in a BLOB's 64KB — it does not, and that is the point: BLOB would silently
+ * truncate anything over 64KB on a non-strict server, so the column is sized
+ * well past the limit the application enforces and the limit stays where it can
+ * give a person a message. */
+async function ensureBrandingAssets(db, log) {
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS branding_assets (
+      asset_key   VARCHAR(32)  NOT NULL PRIMARY KEY,
+      mime        VARCHAR(64)  NOT NULL,
+      bytes       MEDIUMBLOB   NOT NULL,
+      sha256      CHAR(64)     NOT NULL,
+      width       INT          NOT NULL,
+      height      INT          NOT NULL,
+      byte_size   INT          NOT NULL,
+      updated_by  CHAR(36)     NULL,
+      updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+  /* NO FOREIGN KEY ON updated_by, and the same choice as password_reset_settings
+     made for the same reason: it records who last changed a studio-wide setting,
+     and that fact should outlive the account. A key with ON DELETE SET NULL
+     would quietly rewrite the history when somebody leaves; a key without it
+     would stop them being deleted at all. */
+  if (log) log('Schema: branding_assets is present.');
+}
+
 /* Why a work session ended.
  *
  * Added with the change from a running timer to plain start/submit timestamps.
@@ -6048,6 +6101,10 @@ const STEPS = [
   ['branding', ensureBranding],
   // Its mirror, after the table exists and is seeded.
   ['branding mirror', (db) => branding.load(db)],
+  ['branding assets', ensureBrandingAssets],
+  /* The icon's metadata, mirrored after its table exists. The bytes are not
+     mirrored — see src/favicon.js. */
+  ['branding asset mirror', (db) => require('./favicon').load(db)],
   ['client hierarchy', ensureClients],
   // After the client step, so client.* exists in the catalogue by the time
   // roles are topped up against it.

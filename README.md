@@ -2906,6 +2906,63 @@ a feature nobody asked for. There are no print styles either, and no chart or
 canvas that draws a colour: the two canvases crop images, and the bars and stat
 tiles are DOM and CSS, so they pick up `var()` like everything else.
 
+## The icon in the browser tab
+
+Settings → Branding → **Favicon**. Upload a square PNG, ICO, JPEG or WebP up to
+512 KB and it becomes the icon every tab shows, including the sign-in screen's.
+Remove it and the application goes back to having no icon of its own, which is
+what it shipped with.
+
+**It is in the database, not in the app folder, and that is the whole point.**
+This application is deployed by uploading a folder to cPanel, and a redeploy
+replaces that folder. An icon written into `public/` would disappear the next
+time the studio updated, weeks later, with nothing to connect the two events —
+so it is one row in `branding_assets`, which survives deploys, backups and
+restores. The logo above it is in the database for the same reason.
+
+**There is no image library.** `sharp`, `canvas` and the rest are native
+modules: they compile at install time, and on shared hosting that is a deploy
+which fails on the customer's machine. So `src/image-header.js` reads each
+format's header — PNG's IHDR, JPEG's frame marker, WebP's three variants, an
+ICO's directory — and never decodes anything. Every length it reads is compared
+against the bytes actually present and never used as the size of something to
+allocate, so a file claiming to be 100000 × 100000 costs nothing to refuse.
+
+What that buys and what it does not: the size, the format and whether the file
+is animated are all known from the header, which is everything the rules need.
+Re-encoding, resizing or generating the several sizes a `.ico` would hold are
+not possible without a decoder, and are not done. Upload the size you want
+served.
+
+**The rules, which the server enforces and the screen repeats.** PNG, ICO, JPEG
+or WebP — **never SVG**, which can carry script and which a browser fetches for
+every tab. 512 KB. At least 64 × 64, at most 1024 × 1024, and square within a
+tenth, because a browser squashes a favicon rather than cropping it. An `.ico`
+is judged by the largest image it contains, which must be at least 32 × 32.
+Animated PNG and animated WebP are refused. **The file's extension decides
+nothing** — a PNG called `holiday.jpg` is a PNG — but a `Content-Type` that
+names a specific format and disagrees with the bytes is refused, because
+something that confused should not have its output stored.
+
+**Serving.** `GET /branding/favicon` is public and deliberately not under
+`/api`: the browser fetches it by itself, before sign-in, from bookmarks and
+from pinned tabs. The page points at `?v=<first twelve of the sha256>`, so the
+URL changes when and only when the image does — which is what lets the route
+answer that exact URL with a year-long `immutable` cache while a new icon still
+appears at once. The ETag is the full digest, so a browser's next visit is a
+304. `X-Content-Type-Options: nosniff` is set, because these are bytes somebody
+uploaded.
+
+**Permission.** The existing `settings.branding` — the same authority as the
+name, tagline and logo, and for the same reason: everybody sees the result on
+every screen. No new key was added. Super Admin holds it by default and it can
+be granted to any designation through a role group.
+
+**Rate limit.** Twenty changes an hour per address, tunable with
+`FAVICON_UPLOAD_RATE_MAX`. Note that this is the only upload route in the
+application with a limit on it; the logo, avatars, thumbnails and chat
+attachments have none.
+
 ## Settings: the value lists behind the dropdowns
 
 Asset types, priorities and roles used to be arrays in the source and CHECK

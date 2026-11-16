@@ -97,6 +97,8 @@ const REQUIRED = [
   { table: 'notifications',    column: null,            step: 'notifications' },
   { table: 'branding',         column: null,            step: 'branding' },
   { table: 'branding',         column: 'logo',          step: 'branding' },
+  // The studio's uploaded icon. Its own table, keyed; see src/favicon.js.
+  { table: 'branding_assets',  column: null,            step: 'branding assets' },
   { table: 'chat_conversations', column: null,          step: 'chat' },
   { table: 'chat_members',       column: null,          step: 'chat' },
   { table: 'chat_messages',      column: null,          step: 'chat' },

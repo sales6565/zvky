@@ -3455,7 +3455,17 @@ let MILESTONE_TYPES = [];
    sign-in screen wears them and that screen has no token yet. Falls back to the
    built-in defaults so a database that has not been migrated, or an API that is
    briefly unreachable, still shows a header rather than an empty one. */
-let BRANDING = { appName:'ZVKY FORGE', tagline:'art asset & animation pipeline', hasLogo:false, logoUpdatedAt:null };
+let BRANDING = { appName:'ZVKY FORGE', tagline:'art asset & animation pipeline', hasLogo:false, logoUpdatedAt:null,
+  /* The tab icon rides in the same payload; see the route that serves it.
+     Absent from an older build's answer, which reads as "no icon" and leaves
+     the head exactly as this file ships it. */
+  hasFavicon:false, faviconVersion:null, faviconMime:null };
+
+/* A file chosen in Settings but not yet saved: the brief asks for its preview,
+   size and dimensions to be shown BEFORE anything is uploaded, so it is held
+   here between choosing and saving. Outside renderBranding() because that
+   function redraws the whole section and would otherwise forget the choice. */
+let brandIconPick = null;
 
 async function loadBranding(){
   try{
@@ -3490,6 +3500,52 @@ function paintBranding(){
     w.querySelector('h1').textContent = name;
     w.querySelector('.sub').textContent = tagline;
   });
+  paintFavicon();
+}
+
+/* THE URL OF THE STUDIO'S TAB ICON, or null when there is none.
+ *
+ * Root-relative, not API_BASE: the icon is not an API call, it is an image the
+ * browser fetches by itself from the page's head — before sign-in, from a
+ * bookmark, from a pinned tab. The server mounts it off /api for that reason.
+ *
+ * THE VERSION IN THE QUERY IS THE POINT. It is the first twelve characters of
+ * the file's sha256, so the URL changes when and only when the image does: the
+ * route can then tell a browser to keep that URL for a year, and a new icon
+ * still appears at once because it is a different URL. Nothing here has to
+ * think about cache headers. */
+function faviconUrl(){
+  if(!BRANDING.hasFavicon) return null;
+  const v = encodeURIComponent(BRANDING.faviconVersion || '');
+  return `/branding/favicon${v ? `?v=${v}` : ''}`;
+}
+
+/* Put it in the head, or take it out again.
+ *
+ * THE ELEMENTS ARE REPLACED RATHER THAN REPOINTED. Setting .href on a link that
+ * is already there updates the tab in some browsers and is quietly ignored in
+ * others — the icon is one of the few things a browser treats as decided at
+ * parse time. Removing the element and appending a new one is what makes an
+ * open tab change its icon the moment Save is pressed, which the brief asks for
+ * and which is otherwise the sort of thing that works for whoever wrote it and
+ * for nobody else.
+ *
+ * data-brand-icon marks the ones this function owns, so it can never remove a
+ * link somebody adds to the page by hand later. */
+function paintFavicon(){
+  const url = faviconUrl();
+  document.querySelectorAll('link[data-brand-icon]').forEach(el=>el.remove());
+  if(!url) return;
+  for(const rel of ['icon','apple-touch-icon']){
+    const link = document.createElement('link');
+    link.setAttribute('rel', rel);
+    link.setAttribute('data-brand-icon','');
+    /* The type helps a browser decide whether it can use the file at all, and
+       is left off when the payload predates it rather than guessed. */
+    if(BRANDING.faviconMime) link.setAttribute('type', BRANDING.faviconMime);
+    link.setAttribute('href', url);
+    document.head.appendChild(link);
+  }
 }
 async function loadReferenceData(){
   const data = await api('/reference');
@@ -23812,6 +23868,13 @@ function renderBranding(){
   const logoBox = b.hasLogo
     ? `<img src="${API_BASE}/branding/logo?v=${encodeURIComponent(b.logoUpdatedAt||'')}" alt="Current logo">`
     : `<span class="none">No logo — the first letter of the name is used</span>`;
+  /* The icon as it is now. faviconUrl() is the one place that builds this URL,
+     so the preview here and the link in the head can never disagree about which
+     version they are showing. */
+  const iconNow = faviconUrl();
+  const iconBox = iconNow
+    ? `<img src="${iconNow}" alt="Current icon" style="max-width:32px;max-height:32px;">`
+    : `<span class="none">Default icon in use</span>`;
 
   el.innerHTML = `
     <div class="ref-section">
@@ -23839,6 +23902,23 @@ function renderBranding(){
           <div style="font-size:11px;color:var(--ink-faint);margin-top:6px;">
             PNG, SVG, JPEG or WebP, up to 512KB. Shown at 36px tall and never cropped.
           </div>
+        </div>
+        <div id="settings-favicon">
+          <label>Favicon</label>
+          <div class="brand-logo-row" id="br_iconDrop">
+            <div class="brand-logo-preview">${iconBox}</div>
+            <input type="file" id="br_iconFile" style="display:none;"
+                   accept="image/png,image/jpeg,image/webp,image/vnd.microsoft.icon,image/x-icon,.ico">
+            <button class="btn btn-ghost btn-sm" id="br_iconPick">Upload icon</button>
+            ${b.hasFavicon ? `<button class="btn btn-ghost btn-sm" id="br_iconRemove">Remove (use default)</button>` : ''}
+          </div>
+          <div id="br_iconStaged"></div>
+          <div style="font-size:11px;color:var(--ink-faint);margin-top:6px;">
+            Use a square PNG, 512 × 512 recommended (minimum 64 × 64).
+            Allowed: PNG, ICO, JPEG, WebP. Maximum 512 KB.
+            Drag a file onto this row, or choose one.
+          </div>
+          <span class="ref-err" id="br_iconErr"></span>
         </div>
         <div style="display:flex;gap:8px;align-items:center;">
           <button class="btn btn-brand" id="br_save">Save branding</button>
@@ -23893,6 +23973,168 @@ function renderBranding(){
       showToast('Logo removed.');
     }catch(e){ say(e.message); }
   };
+
+  /* ---------------------------------------------------------- the tab icon.
+   *
+   * CHOOSE, LOOK, THEN SAVE — unlike the logo above, which uploads the moment a
+   * file is chosen. The brief asks for it, and the reason is that the rules for
+   * this one are strict enough to be worth seeing before anything happens: a
+   * holiday photo is the wrong shape, a screenshot is the wrong size, and being
+   * shown "1920 x 1080, 840 KB" next to "square, 512 x 512, up to 512 KB"
+   * explains the refusal before it is a refusal.
+   *
+   * THE CHECKS HERE ARE A COURTESY AND NOT THE RULE. src/favicon.js is the rule,
+   * and the route runs it on bytes rather than on what a browser said — so this
+   * code cannot let anything through that the server would refuse, and does not
+   * try to reproduce every case. What it does is answer instantly for the two
+   * mistakes that are both common and obvious from the file alone. */
+  const iconErrEl = document.getElementById('br_iconErr');
+  const sayIcon = (msg, ok)=>{
+    if(!iconErrEl) return;
+    iconErrEl.textContent = msg || '';
+    iconErrEl.style.color = ok ? 'var(--approved)' : '';
+  };
+
+  const ICON_MAX_BYTES = 512 * 1024;
+
+  /* The dimensions, from the browser's own decoder. It is handed a blob URL
+     rather than the file's name, and an .ico that this browser cannot decode
+     comes back as 0 x 0 — reported as unknown rather than guessed, because the
+     server will measure it properly from the header either way. */
+  function measureImage(file){
+    return new Promise((resolve)=>{
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = ()=>resolve({ url, width:img.naturalWidth, height:img.naturalHeight });
+      img.onerror = ()=>resolve({ url, width:0, height:0 });
+      img.src = url;
+    });
+  }
+
+  function renderIconStaged(){
+    const box = document.getElementById('br_iconStaged');
+    if(!box) return;
+    const pick = brandIconPick;
+    if(!pick){ box.innerHTML = ''; return; }
+    const dims = pick.width && pick.height ? `${pick.width} × ${pick.height}` : 'size unknown';
+    box.innerHTML = `
+      <div class="brand-logo-row" style="margin-top:8px;align-items:center;">
+        <div class="brand-logo-preview">${pick.url
+          ? `<img src="${pick.url}" alt="Chosen icon" style="max-width:32px;max-height:32px;">`
+          : '<span class="none">No preview</span>'}</div>
+        <div style="font-size:12px;line-height:1.4;">
+          <div id="br_iconName">${escapeHTML(pick.name)}</div>
+          <div style="color:var(--ink-faint);" id="br_iconFacts">${dims} · ${Math.max(1, Math.round(pick.size/1024))} KB</div>
+        </div>
+        <button class="btn btn-brand btn-sm" id="br_iconSave">Save icon</button>
+        <button class="btn btn-ghost btn-sm" id="br_iconCancel">Cancel</button>
+      </div>`;
+
+    document.getElementById('br_iconCancel').onclick = ()=>{ dropPick(); renderIconStaged(); sayIcon(''); };
+    document.getElementById('br_iconSave').onclick = async (ev)=>{
+      ev.target.disabled = true;
+      sayIcon('Uploading…', true);
+      const form = new FormData();
+      form.append('favicon', pick.file, pick.name);
+      try{
+        const res = await fetch(API_BASE + '/branding/favicon', {
+          method:'POST', headers:{ Authorization:'Bearer ' + state.token }, body: form,
+        });
+        const data = await res.json().catch(()=>({ error:`Upload failed (HTTP ${res.status})` }));
+        if(!res.ok) throw new Error(data.error || 'Upload failed');
+        dropPick();
+        /* paintBranding() first, so the tab this was done in changes its icon
+           before the section is redrawn — the owner sees it happen. */
+        BRANDING = data.branding; paintBranding(); renderBranding();
+        showToast('Tab icon updated.');
+      }catch(e2){
+        sayIcon(e2.message);
+        const btn = document.getElementById('br_iconSave');
+        if(btn) btn.disabled = false;
+      }
+    };
+  }
+
+  function dropPick(){
+    if(brandIconPick && brandIconPick.url) URL.revokeObjectURL(brandIconPick.url);
+    brandIconPick = null;
+  }
+
+  async function stageIcon(file){
+    if(!file) return;
+    dropPick();
+    sayIcon('');
+    if(file.size > ICON_MAX_BYTES){
+      renderIconStaged();
+      sayIcon(`That file is ${Math.round(file.size/1024)} KB; the maximum is 512 KB.`);
+      return;
+    }
+    if(file.size === 0){
+      renderIconStaged();
+      sayIcon('That file is empty.');
+      return;
+    }
+    const measured = await measureImage(file);
+    brandIconPick = { file, name:file.name || 'icon', size:file.size,
+      url:measured.url, width:measured.width, height:measured.height };
+    renderIconStaged();
+    /* Said before Save rather than after, for the two cases the browser can see
+       for itself. Not a refusal — the button still works and the server still
+       decides — because a browser that measured an .ico as 0 x 0 should not be
+       the thing that stops a perfectly good icon. */
+    if(measured.width && measured.height){
+      const ratio = measured.width / measured.height;
+      if(measured.width < 64 || measured.height < 64){
+        sayIcon(`That image is ${measured.width} × ${measured.height}; the minimum is 64 × 64.`);
+      } else if(measured.width > 1024 || measured.height > 1024){
+        sayIcon(`That image is ${measured.width} × ${measured.height}; the maximum is 1024 × 1024.`);
+      } else if(ratio < 0.9 || ratio > 1.1){
+        sayIcon(`That image is ${measured.width} × ${measured.height}, which is not square.`);
+      }
+    }
+  }
+
+  const iconPick = document.getElementById('br_iconPick');
+  const iconFile = document.getElementById('br_iconFile');
+  if(iconPick && iconFile){
+    iconPick.onclick = ()=>iconFile.click();
+    iconFile.onchange = async (e)=>{
+      const file = e.target.files && e.target.files[0];
+      e.target.value = '';
+      await stageIcon(file);
+    };
+  }
+
+  /* DRAG AND DROP onto the row. dragover must be cancelled or the browser
+     refuses the drop and opens the file in the tab instead, which in a
+     single-page application means losing whatever was on screen. */
+  const dropRow = document.getElementById('br_iconDrop');
+  if(dropRow){
+    dropRow.ondragover = (e)=>{ e.preventDefault(); dropRow.style.outline = '1px dashed var(--brand)'; };
+    dropRow.ondragleave = ()=>{ dropRow.style.outline = ''; };
+    dropRow.ondrop = async (e)=>{
+      e.preventDefault();
+      dropRow.style.outline = '';
+      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      await stageIcon(file);
+    };
+  }
+
+  const iconRemove = document.getElementById('br_iconRemove');
+  if(iconRemove) iconRemove.onclick = async ()=>{
+    if(!await askConfirm({ title:'Remove the tab icon?',
+      message:'Browser tabs go back to the default icon.',
+      confirmLabel:'Remove', danger:true })) return;
+    try{
+      const { branding } = await api('/branding/favicon', { method:'DELETE' });
+      dropPick();
+      BRANDING = branding; paintBranding(); renderBranding();
+      showToast('Tab icon removed.');
+    }catch(e){ sayIcon(e.message); }
+  };
+
+  /* A file chosen before a redraw is still chosen after it. */
+  renderIconStaged();
 }
 
 async function renderRolePermissions(){

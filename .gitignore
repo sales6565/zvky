@@ -1,4 +1,11 @@
 node_modules/
+# And without the slash, because the pattern above matches only a DIRECTORY of
+# that name, not a SYMLINK. One slipped into a commit: a test worktree needs the
+# dependencies, the quickest way to give it them is a link to the real tree, and
+# `git add -A` in that worktree then tracked an absolute path from this machine.
+# On a deploy that would unpack as a broken link exactly where the dependencies
+# belong.
+node_modules
 # Settings and secrets come from the host's environment variables. A local .env (any
 # variant) is for development only and is never committed; .env.example is the
 # template, with placeholders only.
