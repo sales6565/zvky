@@ -67,8 +67,14 @@ test('the tab icon, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
     return { status: res.status, body: await res.json().catch(() => ({})) };
   };
 
+  /* THE TREE BEFORE ANY UPLOAD HAS HAPPENED. Taken here, not inside the case
+     that uses it — see the comment there; a snapshot taken later cannot see a
+     file an earlier upload already wrote. */
+  let pristineTree = null;
+
   t.before(async () => {
     await resetSchema(cfg);
+    pristineTree = treeUnder(ROOT);
     server = await startServer(cfg, { BOOTSTRAP_TOKEN: 'icon-token' });
     await call('/auth/bootstrap', { method: 'POST', body: {
       token: 'icon-token', name: 'Root', email: 'root@icon.test', password: PASSWORD } });
@@ -311,9 +317,22 @@ test('the tab icon, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
 
   await t.test('nothing is written inside the application folder', async () => {
     /* The storage rule, checked rather than asserted from the code: the whole
-       tree is listed before and after an upload. multer is configured with
-       memoryStorage, so there is not even a temporary file — and if somebody
-       later changes that, this is what fails. */
+       tree is listed and compared. multer is configured with memoryStorage, so
+       there is not even a temporary file — and if somebody later changes that,
+       this is what fails.
+     *
+     * AGAINST THE TREE AS IT WAS BEFORE THE SUITE'S FIRST UPLOAD, and that
+     * detail is the whole test. The first version snapshotted here, uploaded
+     * once, and compared — which a mutation walked straight through: it wrote
+     * public/favicon.ico on EVERY upload, so the file was already there by the
+     * time this case took its "before", and before matched after perfectly. A
+     * permanent write into the folder a deploy replaces was invisible to the
+     * test written to catch exactly that.
+     *
+     * So the pristine listing is taken in t.before, and the local
+     * before/after is kept as well: one catches a file that persists, the
+     * other catches a temporary file that is written and tidied up by a later
+     * upload. */
     const before = treeUnder(ROOT);
     const up = await upload(fx.png(300, 300), 'another.png', 'image/png');
     assert.strictEqual(up.status, 200);
@@ -321,6 +340,9 @@ test('the tab icon, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
     assert.deepStrictEqual(after, before,
       `the upload wrote files into the deployed folder:\n${
         after.filter((f) => !before.includes(f)).join('\n')}`);
+    assert.deepStrictEqual(after, pristineTree,
+      `something in this suite wrote files into the deployed folder:\n${
+        after.filter((f) => !pristineTree.includes(f)).join('\n')}`);
 
     /* And the bytes really did go somewhere: the row has them. */
     const [row] = await sql(cfg, 'SELECT byte_size FROM branding_assets WHERE asset_key = ?', ['favicon']);

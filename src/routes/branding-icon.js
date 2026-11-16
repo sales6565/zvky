@@ -67,11 +67,21 @@ router.get('/favicon', async (req, res) => {
 
   const etag = `"${icon.sha256}"`;
   res.setHeader('ETag', etag);
-  /* NOSNIFF, because this is the one route in the application that hands a
-     visitor bytes they uploaded. The type is one of four validated image types
-     and the bytes were checked against their own header, so a browser has no
-     reason to guess — and must not be allowed to, because a browser that
-     decides for itself that something is HTML will run it. */
+  /* NOSNIFF — A SECOND LATCH, NOT THE ONLY ONE, and worth saying which.
+   *
+   * helmet is applied to every response in src/server.js and sets this header
+   * already, so removing this line changes no behaviour today. The mutation
+   * battery is what established that: dropping it broke no test, because the
+   * test checks the header on the response and the header was still there.
+   *
+   * It stays, explicitly, for the reason src/chat-files.js gives for its own
+   * three latches: this is one of two routes in the application that hand a
+   * visitor bytes somebody else uploaded, and a browser that decides for itself
+   * that an image is HTML will run it. If helmet's defaults are ever narrowed,
+   * or this router is mounted somewhere without it, the one route that serves
+   * uploaded bytes should not quietly lose the header. The test asserting it is
+   * measuring the deployment's behaviour, which is what matters -- not which
+   * line put it there. */
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Type', icon.mime);
 
