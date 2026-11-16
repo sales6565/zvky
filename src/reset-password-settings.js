@@ -151,7 +151,17 @@ function defaultPassword() {
   if (!sealed.value) return null;
   if (!emailSecret.available(STRICT)) return null;
   try {
-    return emailSecret.decrypt(sealed.value, sealed.fingerprint, STRICT) || null;
+    /* decrypt() returns { ok, value } or { ok: false, reason } — it does NOT
+       return the string. Taking its return value directly handed an OBJECT to
+       bcrypt.hash, which answered "Illegal arguments: object, number" and a 500
+       on every reset. Caught by the end-to-end suite on its first run.
+       
+       A failure is null rather than a throw, for all three of its reasons:
+       no key, a rotated key, or a column this cannot read. Each means "there is
+       no usable default here", and the callers' answer to that is the same
+       refusal they give when none was ever set. */
+    const out = emailSecret.decrypt(sealed.value, sealed.fingerprint, STRICT);
+    return out && out.ok && typeof out.value === 'string' && out.value ? out.value : null;
   } catch {
     return null;
   }

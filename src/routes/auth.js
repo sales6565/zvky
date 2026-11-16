@@ -22,6 +22,9 @@ const passwordPolicy = require('../password-policy');
 
 // bcrypt cost used everywhere passwords are hashed in this codebase.
 const BCRYPT_ROUNDS = 10;
+/* The default an administrator reset installs, and how long it lasts. The
+   value never leaves that module — see isDefaultPassword and resetExpired. */
+const resetSettings = require('../reset-password-settings');
 
 // One place that mints tokens, so the login and change-password paths cannot
 // drift apart on lifetime or payload shape.
@@ -59,6 +62,35 @@ router.post('/login', async (req, res) => {
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) return res.status(401).json({ error: 'Invalid email or password' });
 
+    /* HAS THE DEFAULT RUN OUT?
+     *
+     * The expiry is what makes a shared default tolerable: a credential three
+     * people have heard should stop working, and "Default password stays valid
+     * for N hours" is the studio saying when. After it, the account needs
+     * resetting again.
+     *
+     * THE SAME MESSAGE AS A WRONG PASSWORD, AND THAT IS DELIBERATE. "That
+     * password has expired" tells somebody guessing that they had the right
+     * string and need a fresh reset to use it — which is exactly the sentence
+     * an attacker who has learned the default wants to see. So the form is told
+     * nothing it would not have been told by typing rubbish. The person whose
+     * account it is finds out from the administrator they ask.
+     *
+     * ONLY A PASSWORD AN ADMIN INSTALLED CAN EXPIRE. password_reset_at is NULL
+     * for every account that has not been reset and is cleared the moment
+     * somebody changes their own password, so this cannot fire on a password
+     * the holder chose. `validHours` of 0 switches it off entirely.
+     *
+     * CHECKED AFTER THE HASH, like the deactivated-account branch below and for
+     * the same reason: answering before verifying would turn this endpoint into
+     * a way to ask whether an address has a reset pending.
+     *
+     * NOT LOGGED HERE. A line saying "expired default refused for <email>"
+     * would be a list of accounts worth trying a reset against. */
+    if (resetSettings.resetExpired(user.password_reset_at)) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
     /* Checked AFTER the password, on purpose. Refusing a deactivated account
        before verifying the password would turn this endpoint into a way to ask
        "is this address still an employee here?" without knowing the password —
@@ -78,6 +110,11 @@ router.post('/login', async (req, res) => {
 
     const token = signToken(user.id, user.password_changed_at);
     delete user.password_hash;
+    /* AND THE RESET STAMP, which this route asked for to work out the expiry
+       above and which the browser has no use for. See the note in
+       src/user-fields.js: the page is told mustChangePassword, which is the
+       part it acts on, and not when somebody installed a default. */
+    delete user.password_reset_at;
     user.capabilities = capabilitiesFor(user.role);
     // The same permission set authenticate() attaches to every later request.
     //
@@ -370,8 +407,51 @@ router.post('/password', authenticate, async (req, res) => {
     return res.status(400).json({ error: verdict.message, field: 'newPassword', failed: verdict.failed });
   }
 
+  /* NOT THE DEFAULT THE STUDIO RESETS TO.
+   *
+   * Without this, "choose a new password" can mean "set it to the one every
+   * administrator knows", which would make the forced change theatre: the
+   * account would leave the lock holding a credential three people have heard
+   * and which is written in a Settings field.
+   *
+   * ASKED OF THE SETTINGS MODULE, which compares inside itself and returns a
+   * boolean — see isDefaultPassword(). The value does not come out here, so it
+   * cannot end up in this function's scope, a log line or an error body.
+   *
+   * THE MESSAGE DOES NOT CONFIRM WHAT THE DEFAULT IS, which is the reason it
+   * says "the default password" rather than quoting it: anybody can reach this
+   * endpoint for their own account, and an error that echoed the value back
+   * would turn a change form into a way of reading the setting. It does tell
+   * somebody who typed it by accident what they did, which is the whole job. */
+  if (resetSettings.isDefaultPassword(newPassword)) {
+    return res.status(400).json({
+      error: 'That is the default password an administrator resets accounts to. '
+        + 'Choose something only you know.',
+      field: 'newPassword',
+      code: 'IS_DEFAULT_PASSWORD',
+    });
+  }
+
   const { rows } = await db.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
   if (!rows.length) return res.status(401).json({ error: 'This account no longer exists' });
+
+  /* NOR THE ONE IT IS REPLACING.
+   *
+   * `newPassword === currentPassword` above catches the ordinary case, and it
+   * is not enough on the forced path: somebody whose password was reset types
+   * the default as the current one, so the string they must not reuse is the
+   * stored hash's, which is the default — already refused just above — AND, for
+   * anybody arriving here normally, whatever they are actually signed in with.
+   * Compared against the HASH rather than against a string, because that is the
+   * only form of the previous password this server has. */
+  const reusesPrevious = await bcrypt.compare(String(newPassword), rows[0].password_hash);
+  if (reusesPrevious) {
+    return res.status(400).json({
+      error: 'Your new password must be different from your current one.',
+      field: 'newPassword',
+      code: 'IS_PREVIOUS_PASSWORD',
+    });
+  }
 
   const matches = await bcrypt.compare(currentPassword, rows[0].password_hash);
   if (!matches) {
@@ -387,8 +467,14 @@ router.post('/password', authenticate, async (req, res) => {
      than only when it was set: an ordinary change and a forced one both end
      with a password nobody else has chosen, which is the whole condition the
      flag records. */
+  /* AND password_reset_at IS CLEARED, which is what stops the expiry firing on
+     a password the person chose for themselves. The stamp means "a default was
+     installed here and is on a clock"; once they have replaced it there is no
+     default and no clock. Leaving it set would log somebody out three days
+     after they fixed the problem. */
   await db.query(
-    'UPDATE users SET password_hash = $1, password_changed_at = $2, must_change_password = 0 WHERE id = $3',
+    `UPDATE users SET password_hash = $1, password_changed_at = $2,
+       must_change_password = 0, password_reset_at = NULL WHERE id = $3`,
     [hash, changedAt, req.user.id]
   );
   console.log(`Password changed for ${req.user.email}.`);

@@ -112,7 +112,16 @@ async function authenticate(req, res, next) {
     if (user.mustChangePassword && !ALLOWED_WHILE_LOCKED.some((re) => re.test(req.path))) {
       return res.status(403).json({
         error: 'Your password was reset by an administrator. Choose a new password to carry on.',
+        /* THE FLAG THE PAGE HAS ALWAYS READ, kept as it is: public/index.html
+           branches on it in two places and an older page must keep working
+           against a newer server. */
         mustChangePassword: true,
+        /* AND A STABLE CODE BESIDE IT, which is what a client other than this
+           page matches on. A boolean field is fine for the browser that ships
+           with the server; a machine integration should not have to know that
+           `mustChangePassword: true` is the signal, and a code is the shape
+           every other refusal in this application already uses. */
+        code: 'MUST_CHANGE_PASSWORD',
       });
     }
 

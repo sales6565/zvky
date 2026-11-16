@@ -42,6 +42,7 @@ const nudgeRoutes = require('./routes/nudges');
 const leaveSettingsRoutes = require('./routes/leave-settings');
 const serverRoutes = require('./routes/server');
 const serverSettingsRoutes = require('./routes/server-settings');
+const passwordResetSettingsRoutes = require('./routes/password-reset-settings');
 const gatewayRoutes = require('./routes/gateway');
 const misAccessRoutes = require('./routes/mis-access');
 const outsourceRoutes = require('./routes/outsource');
@@ -214,8 +215,20 @@ app.use('/api/admin/settings/nudges', nudgeRoutes);
 app.use('/api/admin/settings/leave', leaveSettingsRoutes);
 app.use('/api/admin/settings/server', serverSettingsRoutes);
 /* Settings -> Password reset. One key on every route, read included; see the
-   note at the top of src/routes/password-reset-settings.js. */
-app.use('/api/admin/settings/password-reset', require('./routes/password-reset-settings'));
+   note at the top of src/routes/password-reset-settings.js.
+   
+   A NAMED CONST, like every other router here, and not an inline require. The
+   route walker in scripts/route-guards.js pairs each router variable declared
+   at the top of this file with the mount that names it, so an inline require
+   made all four of these routes read as "(not mounted)" in
+   docs/permission-snapshot.txt.
+   
+   AND THIS NOTE MUST NOT SPELL THAT PATTERN OUT. The first version of it quoted
+   the mount expression the walker scans for, and the walker matched THE COMMENT
+   — taking the placeholder inside it as the mount path, so every route in this
+   file was recorded under a prefix that does not exist. A comment that happens
+   to be valid input to a scanner is a comment that gets scanned. */
+app.use('/api/admin/settings/password-reset', passwordResetSettingsRoutes);
 /* The Server tab, and the gateway's own channel. Two routers rather than one
    because they are authenticated in completely different ways: /api/server is
    a signed-in person with server.* permissions, /api/gateway is a machine with

@@ -37,8 +37,16 @@ const USER_COLUMNS = [
   'must_change_password AS `mustChangePassword`',
 ];
 
-// The same list plus the hash, for the two places that verify a password.
-const USER_COLUMNS_WITH_HASH = [...USER_COLUMNS, 'password_hash'];
+/* The same list plus the two columns only a password check needs.
+ *
+ * password_reset_at IS DELIBERATELY NOT IN USER_COLUMNS. That list is the row
+ * sent to the browser, and when an administrator installed a default is a fact
+ * about an account's security state that the page has no use for — the page is
+ * told `mustChangePassword`, which is the part it has to act on. Here, because
+ * the login route needs it to decide whether the default has run out, and the
+ * login route deletes it before it answers (beside password_hash, for the same
+ * reason). */
+const USER_COLUMNS_WITH_HASH = [...USER_COLUMNS, 'password_hash', 'password_reset_at'];
 
 const userFields = (withHash = false) =>
   (withHash ? USER_COLUMNS_WITH_HASH : USER_COLUMNS).join(', ');

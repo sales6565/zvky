@@ -66,8 +66,26 @@ const fromEnvironment = () => {
    route can audit "the configured default" or "the environment default"
    WITHOUT auditing which string that was. */
 function resolve() {
-  const configured = settings.defaultPassword();
-  if (configured) return { value: configured, source: 'configured' };
+  /* THE SWITCH IS ASKED FIRST, AND IT HAD BEEN FORGOTTEN.
+   *
+   * This read settings.defaultPassword() straight away, so "Reset passwords to
+   * the default password" was a switch that stored a value and changed nothing:
+   * turning it off left every reset still using the configured default. The
+   * end-to-end suite caught it on the case written for exactly that.
+   *
+   * OFF SKIPS THE CONFIGURED VALUE AND FALLS THROUGH, which is what "restores
+   * the behaviour found before this change" means: that behaviour was
+   * DEFAULT_USER_PASSWORD from the environment, and a studio that turns the
+   * switch off gets it back if they have it — and a refusal if they do not,
+   * which is the same behaviour said out loud instead of silently reaching for
+   * a value in the source.
+   *
+   * settings.useDefault() is the switch AND the presence of a value: a switch
+   * that is on with nothing stored has nothing to offer either. */
+  if (settings.useDefault()) {
+    const configured = settings.defaultPassword();
+    if (configured) return { value: configured, source: 'configured' };
+  }
   const env = fromEnvironment();
   if (env) return { value: env, source: 'environment' };
   return { value: null, source: 'none' };
