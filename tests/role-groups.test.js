@@ -146,7 +146,23 @@ const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'set
      (what they had open, for how long, what happened to it), so it starts with
      the Super Admin and is scoped by the Time Sheet tab's own visibility union
      on top of that. */
-  'history.view_others'];
+  'history.view_others',
+  /* THE DEFAULT PASSWORD AN ADMIN RESET GIVES OUT (Prompt 70). Super Admin only,
+     and in this list rather than the one below because whoever holds it chooses
+     the string that opens any account an administrator has just reset.
+
+     GRANTABLE, unlike settings.permissions and settings.integrations, and the
+     distinction is worth stating because those two are the only non-grantable
+     keys in the catalogue. Each of them is a one-way door: one lets you give
+     your own role every permission, the other mints a machine credential that
+     ignores project scope. This one is neither — the value is useless without
+     user.reset_password, and a reset is already refused against an account
+     whose role holds settings.permissions unless you hold that too. So a studio
+     may put it in a role group for the two or three people who run accounts.
+
+     AND IT DOES NOT GRANT READING THE VALUE. Nothing reads it back, at any
+     permission level: there is no route that unseals it. */
+  'settings.default_password'];
 
 /* THE KEYS THAT ARE DELIBERATELY NOT SUPER-ADMIN-ONLY, listed separately so
  * each exception is argued rather than hidden in the list above.

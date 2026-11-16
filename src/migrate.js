@@ -4913,7 +4913,20 @@ async function ensurePasswordResetDefaults(db, log) {
     }
   }
 
-  await db.query(`CREATE TABLE IF NOT EXISTS password_reset_settings (
+  /* THROUGH applyTableOptions, LIKE EVERY OTHER TABLE IN THIS FILE.
+   *
+   * My first version wrote a bare CREATE TABLE with `DEFAULT CHARSET=utf8mb4`,
+   * and tests/reports.test.js caught it: every CREATE in this file must go
+   * through that helper, which stamps the table with the SCHEMA'S OWN
+   * collation rather than the server's default.
+   *
+   * It matters here more than the charset does. A column whose collation
+   * differs from the one it is joined against makes MySQL refuse the join
+   * outright — "Illegal mix of collations" — and this table's updated_by is
+   * joined to users.id on every read. There is already a migration step in this
+   * file whose whole job is repairing tables whose collations disagree, which is
+   * how that failure was found the first time. */
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS password_reset_settings (
     id              TINYINT       NOT NULL PRIMARY KEY,
     use_default     TINYINT(1)    NOT NULL DEFAULT 1,
     force_change    TINYINT(1)    NOT NULL DEFAULT 1,
@@ -4924,7 +4937,7 @@ async function ensurePasswordResetDefaults(db, log) {
     updated_by      CHAR(36)      NULL,
     updated_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
                                   ON UPDATE CURRENT_TIMESTAMP
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
   log('Schema: password_reset_settings ready (empty \u2014 the shipped defaults apply).');
 }
 

@@ -44,6 +44,19 @@ const assignments = require('../src/assignments');
 
 const cfg = config('submitnotif');
 
+/* THE DEFAULT PASSWORD A RESET INSTALLS, generated for this run.
+ *
+ * One of the cases below resets somebody's password to prove an unrelated
+ * notification kind still works. Prompt 70 took the hard-coded default out of
+ * src/routes/users.js, so a reset now needs a configured value or
+ * DEFAULT_USER_PASSWORD and refuses with 409 when it has neither — and the
+ * response no longer carries the password back, so this suite has to know the
+ * value rather than read it.
+ *
+ * Generated rather than written: a literal here would put a working default
+ * back in the repository, which is what that change undid. */
+const RESET_DEFAULT = `Sn-${require('node:crypto').randomBytes(9).toString('base64url')}-3c!`;
+
 // --- the wording, without a database ------------------------------------------
 
 test('a submission reads as a submission, not as an assignment', () => {
@@ -112,7 +125,20 @@ test('submission notifications', { skip: cfg ? false : SKIP_REASON }, async (t) 
 
   t.before(async () => {
     await resetSchema(cfg);
-    server = await startServer(cfg, { BOOTSTRAP_TOKEN: 'test-bootstrap-token' });
+    /* A DEFAULT PASSWORD, because one of the cases below resets one.
+     *
+     * Prompt 70 removed the hard-coded default from src/routes/users.js, so a
+     * reset now needs either a configured value or DEFAULT_USER_PASSWORD and
+     * refuses with 409 when it has neither. This suite is about NOTIFICATIONS,
+     * not about that, so it hands the server a value the way a deployment would
+     * rather than configuring one through the Settings route.
+     *
+     * Generated per run, never written down: a literal here would put a working
+     * default back in the repository, which is what that change undid. */
+    server = await startServer(cfg, {
+      BOOTSTRAP_TOKEN: 'test-bootstrap-token',
+      DEFAULT_USER_PASSWORD: RESET_DEFAULT,
+    });
     await api(server.base, '/auth/bootstrap', {
       method: 'POST',
       body: { token: 'test-bootstrap-token', name: 'Root Admin', email: 'root@zvky.test', password: PASSWORD },
@@ -442,14 +468,21 @@ test('submission notifications', { skip: cfg ? false : SKIP_REASON }, async (t) 
        step: it is the one kind raised from outside the asset routes, so it is
        the one most likely to be broken by a change to them and not noticed. */
     token.solo = (await api(server.base, '/auth/login', {
-      method: 'POST', body: { email: 'solo@zvky.test', password: reset.body.temporaryPassword },
+      /* THE VALUE THIS SUITE CONFIGURED, not one read back from the answer.
+         The reset response used to carry `temporaryPassword`; it does not any
+         more — a password in a JSON body is a password in the browser's memory,
+         in any proxy that logs bodies and in any screenshot. The suite knows it
+         because it generated it and handed it to the server. */
+      method: 'POST', body: { email: 'solo@zvky.test', password: RESET_DEFAULT },
     })).body.token;
-    assert.ok(token.solo, 'the temporary password should sign them back in');
+    assert.ok(token.solo, 'the default password should sign them back in');
+    assert.strictEqual(reset.body.temporaryPassword, undefined,
+      'the reset response is handing the password back again');
     /* And out of the must-change-password hold, which otherwise refuses every
        other route including the bell. */
     const changed = await as('solo', '/auth/password', {
       method: 'POST',
-      body: { currentPassword: reset.body.temporaryPassword, newPassword: 'Solo-Chosen-1!' },
+      body: { currentPassword: RESET_DEFAULT, newPassword: 'Solo-Chosen-1!' },
     });
     assert.strictEqual(changed.status, 200, `change: ${JSON.stringify(changed.body)}`);
     token.solo = changed.body.token || token.solo;

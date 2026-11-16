@@ -53,6 +53,7 @@ section settings.categories := Asset Categories
 section settings.project_categories := Project Categories
 section settings.milestone_types := Milestone Types
 section settings.roles := Roles
+section settings.default_password := Password reset
 section settings.ip_allowlist := IP Allowlist
 section settings.ip_blocklist := IP Blocklist
 section settings.email_config := Email Configuration
@@ -106,6 +107,7 @@ settings sections:
   settings.project_categories=yes
   settings.milestone_types=yes
   settings.roles=yes
+  settings.default_password=yes
   settings.ip_allowlist=yes
   settings.ip_blocklist=yes
   settings.email_config=yes
@@ -332,6 +334,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -558,6 +561,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -784,6 +788,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -1010,6 +1015,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -1236,6 +1242,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -1462,6 +1469,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -1688,6 +1696,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -1914,6 +1923,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -2140,6 +2150,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -2366,6 +2377,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -2592,6 +2604,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -2818,6 +2831,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -3044,6 +3058,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -3270,6 +3285,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -3496,6 +3512,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -3722,6 +3739,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -3948,6 +3966,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -4174,6 +4193,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -4400,6 +4420,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -4626,6 +4647,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -4852,6 +4874,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -5078,6 +5101,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -5304,6 +5328,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -5530,6 +5555,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -5756,6 +5782,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -5982,6 +6009,7 @@ settings sections:
   settings.project_categories=yes
   settings.milestone_types=yes
   settings.roles=yes
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -6208,6 +6236,7 @@ settings sections:
   settings.project_categories=yes
   settings.milestone_types=yes
   settings.roles=yes
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -6434,6 +6463,7 @@ settings sections:
   settings.project_categories=yes
   settings.milestone_types=yes
   settings.roles=yes
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -6660,6 +6690,7 @@ settings sections:
   settings.project_categories=yes
   settings.milestone_types=yes
   settings.roles=yes
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -6886,6 +6917,7 @@ settings sections:
   settings.project_categories=yes
   settings.milestone_types=yes
   settings.roles=yes
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -7112,6 +7144,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -7338,6 +7371,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -7564,6 +7598,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -7790,6 +7825,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -8016,6 +8052,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -8242,6 +8279,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -8468,6 +8506,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -8694,6 +8733,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -8920,6 +8960,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -9146,6 +9187,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -9372,6 +9414,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -9598,6 +9641,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -9824,6 +9868,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -10050,6 +10095,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -10276,6 +10322,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -10502,6 +10549,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -10728,6 +10776,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -10954,6 +11003,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -11180,6 +11230,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -11406,6 +11457,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -11632,6 +11684,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -11858,6 +11911,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -12084,6 +12138,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -12310,6 +12365,7 @@ settings sections:
   settings.project_categories=yes
   settings.milestone_types=yes
   settings.roles=yes
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -12536,6 +12592,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -12762,6 +12819,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -12988,6 +13046,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -13214,6 +13273,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -13440,6 +13500,7 @@ settings sections:
   settings.project_categories=no
   settings.milestone_types=no
   settings.roles=no
+  settings.default_password=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
