@@ -60,10 +60,30 @@ async function main() {
 
     await client.query('BEGIN');
 
-    // A single reusable hash — same password, same hash, hashed once (bcrypt is
-    // intentionally slow; hashing 500 identical passwords would take ~a minute).
-    const demoHash = await bcrypt.hash('zvky2026', 10);
-    const superHash = await bcrypt.hash('superadmin', 10);
+    /* THE DEMO PASSWORD COMES FROM THE ENVIRONMENT, AND THERE IS NO DEFAULT.
+     *
+     * This read `bcrypt.hash('<a literal>', 10)`. A password written into a
+     * seed script is a password in every clone of the repository, and a seed
+     * script is exactly the file somebody runs against something real by
+     * accident. So it is refused rather than guessed: SEED_PASSWORD, or
+     * DEFAULT_USER_PASSWORD if the deployment already has one.
+     *
+     * The super admin's password comes from the same place. It used to be a
+     * second literal ('superadmin'), which was worse than the first: it names
+     * the account it opens.
+     *
+     * A single reusable hash — same password, same hash, hashed once (bcrypt is
+     * intentionally slow; hashing 500 identical passwords would take ~a
+     * minute). */
+    const seedPassword = process.env.SEED_PASSWORD || process.env.DEFAULT_USER_PASSWORD || null;
+    if (!seedPassword) {
+      console.error('Set SEED_PASSWORD (or DEFAULT_USER_PASSWORD) to the password the demo');
+      console.error('accounts should get. There is deliberately no default in this repository.');
+      await client.query('ROLLBACK');
+      process.exit(1);
+    }
+    const demoHash = await bcrypt.hash(seedPassword, 10);
+    const superHash = demoHash;
 
     const superId = uuid();
     await client.query(
@@ -209,8 +229,10 @@ async function main() {
 
     await client.query('COMMIT');
     console.log('Seed complete:');
-    console.log('  Super admin: ava@zvky.studio / superadmin');
-    console.log('  Everyone else: <their email> / zvky2026');
+    /* THE VALUE IS NOT PRINTED. Whoever ran this script chose it and knows it;
+       echoing it puts it in the terminal scrollback and in CI output. */
+    console.log('  Super admin: ava@zvky.studio / the password you set in SEED_PASSWORD');
+    console.log('  Everyone else: <their email> / the same password');
     console.log(`  ${adminIds.length} admins, 40 leads across ${LEADS.length} supervisory designations,`);
     console.log(`  44 coordinators, ${ARTIST_COUNT} contributors across ${CONTRIBUTORS.length} designations,`);
     console.log(`  ${cdIds.length} art directors, ${projects.length} projects.`);

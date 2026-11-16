@@ -140,29 +140,35 @@ router.delete('/:id/photo', async (req, res) => {
   res.json({ ok: true, hasPhoto: false, photoUpdatedAt: null });
 });
 
-/* The studio's standing password: what a new account is created with, and what
- * an administrator's reset sets an existing one back to.
+/* THE DEFAULT PASSWORD IS NOT HERE ANY MORE. See src/default-password.js.
  *
- * ONE VALUE FOR BOTH, at the studio's request, so there is one thing to
- * remember and one thing to say over the phone. It used to be one fixed value
- * for a new account and a generated one for a reset, which meant an
- * administrator handling both had two different conventions to keep straight.
+ * This file used to declare it:
  *
- * WHAT IT COSTS, written here rather than left to be discovered. A fixed value
- * in the source is a value everybody with the repository knows. The account is
- * locked to a password change the moment it is set — see must_change_password
- * in src/middleware/auth.js — so it cannot be used to WORK. It can be used to
- * COMPLETE THE CHANGE, which means anybody who knows this string and somebody's
- * email can take over a just-reset account in the window before its owner signs
- * in. Two things narrow that window and neither closes it: tell the person
- * promptly, and set DEFAULT_USER_PASSWORD on the deployment so the value is not
- * the one printed here.
+ *     const DEFAULT_PASSWORD = process.env.DEFAULT_USER_PASSWORD || '<a literal>';
  *
- * Deliberately NOT checked against passwordPolicy: it does not meet it (eight
- * characters, no uppercase, no symbol) and it is not supposed to — it is a
- * credential with one use, which the policy is then enforced on. Nothing sets
- * it as a password anybody keeps. */
-const DEFAULT_PASSWORD = process.env.DEFAULT_USER_PASSWORD || 'zvky2026';
+ * and the note above it said, in its own words, what was wrong: "A fixed value
+ * in the source is a value everybody with the repository knows", followed by
+ * advice to set the environment variable "so the value is not the one printed
+ * here". That is a correct description of a problem and not a fix for it — the
+ * string was still in the file, still worked on any deployment that had not set
+ * the variable, and no reader could tell which deployments those were.
+ *
+ * SO THE VALUE NOW COMES FROM ONE RESOLVER: the Super Admin's configured value,
+ * sealed under EMAIL_ENCRYPTION_KEY; failing that DEFAULT_USER_PASSWORD from
+ * the environment; failing that NOTHING, and the three flows that want one
+ * refuse and say what to set. The old comment's honest accounting of what a
+ * shared default costs is kept at the top of src/reset-password-settings.js,
+ * together with the two things that now narrow the window it described: the
+ * forced change, which was already here, and the expiry, which is new.
+ *
+ * ALSO GONE: all three responses that returned the value. Creating a user,
+ * importing users and resetting a password each handed it back as
+ * `temporaryPassword` for the page to print. A password in a JSON body is in
+ * the browser's memory, in any proxy that logs bodies and in any screenshot of
+ * the screen that showed it.
+ */
+const defaultPassword = require('../default-password');
+const resetSettings = require('../reset-password-settings');
 
 // Which designations a given manager is allowed to hand out. Super admins can
 // assign anything; an admin can staff up their own projects but cannot mint
@@ -356,7 +362,18 @@ router.post('/', requirePermission('user.add'), async (req, res) => {
   if (existing.length) return res.status(409).json({ error: 'That email is already in use' });
 
   const def = roleDef(role);
-  const hash = await bcrypt.hash(password || DEFAULT_PASSWORD, 10);
+  /* THE SAME RESOLVER THE RESET USES, so a studio has one default and not two.
+     Refused rather than falling back to a value from the source — see the note
+     at the top of this file. A caller that supplied a password is unaffected. */
+  let initial = password;
+  if (!initial) {
+    const resolved = defaultPassword.resolve();
+    if (!resolved.value) {
+      return res.status(409).json({ code: 'no_default_password', error: defaultPassword.refusal() });
+    }
+    initial = resolved.value;
+  }
+  const hash = await bcrypt.hash(initial, 10);
   const id = uuid();
 
   /* Only contributors report to a lead; a lead or coordinator does not.
@@ -392,7 +409,9 @@ router.post('/', requirePermission('user.add'), async (req, res) => {
   });
   res.status(201).json({
     user: { ...rows[0], capabilities: capabilitiesFor(role) },
-    temporaryPassword: password ? undefined : DEFAULT_PASSWORD,
+    /* NO PASSWORD IN THIS BODY either. It carried `temporaryPassword` so the
+       page could print it; the admin is told the account got the default. */
+    usedDefault: !password,
   });
 });
 
@@ -803,44 +822,76 @@ router.post('/:id/reset-password', requirePermission('user.reset_password'), asy
     });
   }
 
-  /* The studio's standing value, not a generated one — see DEFAULT_PASSWORD
-     above, including what that costs. The same string a new account is created
-     with, so an administrator has one convention rather than two. */
-  const temporaryPassword = DEFAULT_PASSWORD;
-  const hash = await bcrypt.hash(temporaryPassword, BCRYPT_ROUNDS);
+  /* THE CONFIGURED DEFAULT, UNSEALED HERE AND NOWHERE ELSE.
+   *
+   * resolve() is the Super Admin's value first, DEFAULT_USER_PASSWORD second,
+   * nothing third — see src/default-password.js. The value lives in this
+   * function for exactly as long as it takes bcrypt to hash it: it is not
+   * logged, not audited, not notified, not returned, and not held in any
+   * module's cache in readable form.
+   *
+   * NOTHING IS WRITTEN WHEN THERE IS NONE. The refusal comes before the UPDATE,
+   * so a studio with no default and no environment variable gets a sentence
+   * naming what to set and an account that is exactly as it was. */
+  const resolved = defaultPassword.resolve();
+  if (!resolved.value) {
+    return res.status(409).json({ code: 'no_default_password', error: defaultPassword.refusal() });
+  }
+  const hash = await bcrypt.hash(resolved.value, BCRYPT_ROUNDS);
+
+  /* WHETHER THEY MUST CHOOSE A NEW ONE. The switch, which ships ON. Off is a
+     studio that would rather hand out a working password than make somebody
+     change it at the door; it is their call and the expiry still applies. */
+  const force = resetSettings.forceChange() ? 1 : 0;
+
   /* Moving password_changed_at is what signs the account's other devices out —
      see the `pwd` claim in src/routes/auth.js. An account whose password has
      just been taken over by somebody else is exactly the case that has to end
-     its existing sessions. */
+     its existing sessions.
+     
+     password_reset_at is when the clock on the default starts. Separate from
+     password_changed_at because the two answer different questions: one is "are
+     your old tokens still good", the other is "has this default run out" —
+     and a person who then changes their password moves the first and clears the
+     second, which is what stops the expiry firing on a password they chose. */
   const changedAt = Date.now();
   await db.query(
-    'UPDATE users SET password_hash = $1, password_changed_at = $2, must_change_password = 1 WHERE id = $3',
-    [hash, changedAt, target.id]
+    `UPDATE users SET password_hash = $1, password_changed_at = $2,
+       must_change_password = $3, password_reset_at = $2 WHERE id = $4`,
+    [hash, changedAt, force, target.id]
   );
 
-  /* Still never the value in the log, even though it is now a known one. Two
-     reasons it stays out: the value can be changed per deployment, so a log
-     quoting it would be a log that leaks whatever it was set to; and a record
-     that names passwords is a habit rather than a one-off. */
-  console.log(`${req.user.email} reset the password for ${target.email}.`);
+  /* NEVER THE VALUE IN THE LOG, and now not even which of the two sources it
+     came from in a way that narrows it — `source` is the word "configured" or
+     "environment", which tells an investigator where to look without telling
+     them what to type. */
+  console.log(`${req.user.email} reset the password for ${target.email} (${resolved.source} default).`);
   req.activity({
     module: 'users', action: 'user.reset_password', entityType: 'user',
     entityId: target.id, entityLabel: target.name,
-    summary: `Reset the password for ${target.name} <${target.email}> to a temporary one`,
+    summary: `Reset the password for ${target.name} <${target.email}> to the default password`,
   });
   /* Failing to tell them must not fail the reset — the same rule the rest of
      this module follows. A password already changed and a notification that
-     did not land is recoverable; a reset that refused halfway is not. */
+     did not land is recoverable; a reset that refused halfway is not.
+     
+     THE NOTICE CARRIES NO PASSWORD, and could not: notifications.passwordReset
+     takes the two user ids and a kind, and the sentence is rendered from the
+     kind. There is no password-reset EMAIL path in this deployment — no kind
+     for it in src/email-notifications.js — so the in-app notice is the whole of
+     what is sent. */
   await notifications.passwordReset(db, { userId: target.id, byId: req.user.id }).catch(() => {});
 
   res.json({
     ok: true,
     user: { id: target.id, name: target.name, email: target.email },
-    /* Once, and only here. It is not stored anywhere in readable form and
-       cannot be asked for again — a second reset is the way to get another. */
-    temporaryPassword,
-    message: `${target.name} must change this before they can use the app, and their other `
-      + 'sessions have been signed out.',
+    /* NO PASSWORD IN THIS BODY. It used to carry `temporaryPassword` for the
+       page to print on screen; the admin is now told that the reset used the
+       default, which they already know, and nothing that could be screenshotted
+       or logged by a proxy. */
+    usedDefault: true,
+    mustChange: Boolean(force),
+    message: 'Password reset to the default password. Tell the user to sign in and change it.',
   });
 });
 
@@ -1047,8 +1098,16 @@ router.post('/bulk', requirePermission('user.bulk_upload'), uploadImport.single(
   // bcrypt is intentionally slow. Rows without a password all get the same
   // temporary one, so hash it once rather than once per row — the difference
   // between a second and several minutes on a large file.
-  const sharedHash = ready.some((e) => !e.values.password)
-    ? await bcrypt.hash(DEFAULT_PASSWORD, BCRYPT_ROUNDS)
+  /* THE SAME RESOLVER AGAIN. A file with password-less rows needs a default;
+     without one the import is refused as a whole rather than half-applied with
+     a value from the source. */
+  const needsDefault = ready.some((e) => !e.values.password);
+  const resolvedBulk = needsDefault ? defaultPassword.resolve() : { value: null };
+  if (needsDefault && !resolvedBulk.value) {
+    return res.status(409).json({ code: 'no_default_password', error: defaultPassword.refusal() });
+  }
+  const sharedHash = needsDefault
+    ? await bcrypt.hash(resolvedBulk.value, BCRYPT_ROUNDS)
     : null;
   for (const entry of ready) {
     entry.hash = entry.values.password ? await bcrypt.hash(entry.values.password, BCRYPT_ROUNDS) : sharedHash;
@@ -1109,7 +1168,9 @@ router.post('/bulk', requirePermission('user.bulk_upload'), uploadImport.single(
     totalRows: records.length,
     createdUsers: created.map((e) => ({ id: e.id, name: e.values.name, email: e.values.email, role: e.values.role })),
     errors,
-    ...(usedDefault ? { temporaryPassword: DEFAULT_PASSWORD } : {}),
+    /* NO PASSWORD IN THIS BODY either; `usedDefault` says that some rows got
+       the default without saying what it is. */
+    usedDefault,
   });
 });
 

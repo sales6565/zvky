@@ -213,6 +213,9 @@ app.use('/api/admin/settings/nudges', nudgeRoutes);
    divide a half-day. Its own key, settings.leave.manage — see the route. */
 app.use('/api/admin/settings/leave', leaveSettingsRoutes);
 app.use('/api/admin/settings/server', serverSettingsRoutes);
+/* Settings -> Password reset. One key on every route, read included; see the
+   note at the top of src/routes/password-reset-settings.js. */
+app.use('/api/admin/settings/password-reset', require('./routes/password-reset-settings'));
 /* The Server tab, and the gateway's own channel. Two routers rather than one
    because they are authenticated in completely different ways: /api/server is
    a signed-in person with server.* permissions, /api/gateway is a machine with

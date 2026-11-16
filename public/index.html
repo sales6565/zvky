@@ -15193,9 +15193,16 @@ document.getElementById('saveUserModal').addEventListener('click', async ()=>{
   if(leadSel && leadSel.value) body.teamLeadId = leadSel.value;
   if(projSel && projSel.value) body.projectId = projSel.value;
   try{
-    await api('/users', { method:'POST', body });
+    const res = await api('/users', { method:'POST', body });
     userModalWrap.classList.remove('show'); renderUsersTab();
-    showToast(`${name} added as ${roleInfo(role).label}. Default password: zvky2026`);
+    /* NO PASSWORD IN THE TOAST. It read "Default password: <a literal>" — the
+       value hard-coded in the page, printed on screen, and in whatever
+       screenshot or screen-share happened to be running. The server no longer
+       returns it either; `usedDefault` says the account got the default without
+       saying what it is. */
+    showToast(res && res.usedDefault
+      ? `${name} added as ${roleInfo(role).label}. They sign in with the default password and must change it.`
+      : `${name} added as ${roleInfo(role).label}.`);
   }catch(err){ showToast(err.message); }
 });
 

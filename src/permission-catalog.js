@@ -2592,6 +2592,40 @@ const GROUPS = [
           + 'It also shows each key once, at creation, and never again.',
       },
       {
+        /* THE DEFAULT PASSWORD EVERY ADMIN RESET SETS.
+         *
+         * SUPER ADMIN ONLY BY DEFAULT — has('managePermissions'), which is that
+         * tier and nothing else. Whoever holds this chooses the string that
+         * opens any account an administrator resets, so it is the same class of
+         * thing as the role-permission screen itself.
+         *
+         * GRANTABLE, UNLIKE settings.permissions AND settings.integrations.
+         * Those two are not grantable because each is a one-way door: one lets
+         * you give your own role every permission, the other mints a machine
+         * credential that ignores project scope. This one is neither. It sets a
+         * value that is useless on its own — using it requires ALSO holding
+         * user.reset_password, and a reset is refused against an account whose
+         * role holds settings.permissions unless you hold that too. So a studio
+         * may put it in a role group for the two or three people who run
+         * accounts, which is what the brief asks for, without that being a path
+         * to anything else.
+         *
+         * WHAT IT DOES NOT GRANT: reading the value. Nothing reads it back, at
+         * any permission level — see src/reset-password-settings.js. */
+        key: 'settings.default_password',
+        label: 'Change the Default Reset Password',
+        impliedBy: has('managePermissions'),
+        danger: 'This sets the one password every administrator reset gives out. Whoever holds '
+          + 'it chooses the string that opens any account that has just been reset, until that '
+          + 'person changes it. The value is stored encrypted and is never shown again \u2014 not '
+          + 'on this screen, not in the audit log, not to a Super Admin \u2014 so changing it is '
+          + 'the only way to learn what it is.',
+        describe: 'Set the default password an administrator reset gives somebody, how long it '
+          + 'stays valid, and whether they must choose a new one at next sign-in. It does not '
+          + 'allow resetting a password \u2014 that is Reset A Password \u2014 and it never shows '
+          + 'the value, to anybody.',
+      },
+      {
         key: 'settings.role_groups_view',
         label: 'Read Role Groups',
         impliedBy: viewOf('settings.role_groups'),

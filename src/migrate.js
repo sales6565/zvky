@@ -4863,6 +4863,71 @@ async function ensureTlActionRenamed(db, log) {
   }
 }
 
+/* THE DEFAULT PASSWORD A RESET SETS, AND WHEN IT STOPS WORKING.
+ *
+ * Two additive pieces, neither of which touches an existing row:
+ *
+ *   users.password_reset_at        when an administrator last reset this
+ *                                  account's password, as epoch milliseconds —
+ *                                  the same unit password_changed_at already
+ *                                  uses, so the two can be compared without a
+ *                                  conversion. NULL for every existing user and
+ *                                  for anybody who changed their own password,
+ *                                  and NULL means "no reset behind this
+ *                                  password", which cannot expire.
+ *
+ *   password_reset_settings        the single-row settings table: the two
+ *                                  switches, the expiry in hours, and the
+ *                                  SEALED default password. Nothing readable.
+ *
+ * NO ROW IS SEEDED, and that is the "falls back to today's behaviour" case the
+ * brief asks for: an empty table reads as the shipped defaults
+ * (src/reset-password-settings.js DEFAULTS) with no default password set, which
+ * means a reset uses DEFAULT_USER_PASSWORD from the environment if the studio
+ * has it and refuses if it does not.
+ *
+ * THE SEALED COLUMN IS CIPHERTEXT. VARCHAR(512) is ample for AES-256-GCM over a
+ * password: src/email-secret.js stores iv:tag:ciphertext hex, and the policy's
+ * 200-character maximum puts the worst case well under half of that. The key
+ * fingerprint beside it is what lets a value sealed under a rotated
+ * EMAIL_ENCRYPTION_KEY be recognised as unreadable rather than decrypted into
+ * rubbish — the same pairing src/server-settings.js uses.
+ *
+ * IDEMPOTENT: every piece is probed before it is added, so this runs on every
+ * boot and does nothing on all but the first.
+ */
+async function ensurePasswordResetDefaults(db, log) {
+  const { rows: cols } = await db.query(
+    `SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'
+        AND COLUMN_NAME = 'password_reset_at'`
+  ).catch(() => ({ rows: [] }));
+  if (!cols.length) {
+    try {
+      await db.query('ALTER TABLE users ADD COLUMN password_reset_at BIGINT NULL');
+      log('Schema: added users.password_reset_at \u2014 when an admin last reset this password.');
+    } catch (err) {
+      if (err.code !== 'ER_NO_SUCH_TABLE') throw err;
+      log('Schema: users is not there yet, so password_reset_at was skipped.');
+      return;
+    }
+  }
+
+  await db.query(`CREATE TABLE IF NOT EXISTS password_reset_settings (
+    id              TINYINT       NOT NULL PRIMARY KEY,
+    use_default     TINYINT(1)    NOT NULL DEFAULT 1,
+    force_change    TINYINT(1)    NOT NULL DEFAULT 1,
+    valid_hours     INT           NOT NULL DEFAULT 72,
+    default_sealed  VARCHAR(512)  NULL,
+    default_key_fp  VARCHAR(64)   NULL,
+    default_set_at  DATETIME      NULL,
+    updated_by      CHAR(36)      NULL,
+    updated_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                  ON UPDATE CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  log('Schema: password_reset_settings ready (empty \u2014 the shipped defaults apply).');
+}
+
 /* A password an administrator reset, and the change it forces.
  *
  * Two pieces, both here because both have to survive a deployment that has
@@ -6138,6 +6203,12 @@ const STEPS = [
   // After users and after role_permissions: it touches a column on one and a
   // default on the other.
   ['admin password reset', ensurePasswordReset],
+  /* After the step above, which adds users.must_change_password: this adds the
+     expiry stamp beside it and the settings table the default lives in. */
+  ['password reset defaults', ensurePasswordResetDefaults],
+  /* The mirror loads straight after, like every other settings mirror, so the
+     first request already reads the row rather than the shipped defaults. */
+  ['password reset settings mirror', (db) => require('./reset-password-settings').load(db)],
   // Last: it reads assets.status, which every step above may have changed.
   ['stranded work sessions', closeStrandedSessions],
   ['follow-up indexes', ensureFollowUpIndexes],

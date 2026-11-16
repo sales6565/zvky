@@ -1,6 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert');
+const crypto = require('node:crypto');
 const { config, resetSchema, startServer, stopServer, api, SKIP_REASON, systemClientId } = require('./helpers');
+
+/* Generated per run, never written down: see the note at startServer below. */
+const IMPORT_DEFAULT = `Im-${crypto.randomBytes(9).toString('base64url')}-4b!`;
 const userImport = require('../src/user-import');
 const assetImport = require('../src/asset-import');
 
@@ -125,7 +129,14 @@ test('bulk user upload', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
   t.before(async () => {
     await resetSchema(cfg);
-    server = await startServer(cfg, { BOOTSTRAP_TOKEN: 'test-bootstrap-token' });
+    /* THE DEFAULT THIS RUN'S IMPORTED ACCOUNTS GET, generated here and handed
+       to the server through the documented environment fallback. It was a
+       literal matching the one that used to be in src/routes/users.js; both are
+       gone, and tests/password-default.test.js scans the repository for this
+       value to keep them gone. */
+    server = await startServer(cfg, {
+      BOOTSTRAP_TOKEN: 'test-bootstrap-token', DEFAULT_USER_PASSWORD: IMPORT_DEFAULT,
+    });
     await call('/auth/bootstrap', {
       method: 'POST',
       body: { token: 'test-bootstrap-token', name: 'Import Admin', email: 'super@zvky.test', password: PASSWORD },
@@ -144,12 +155,21 @@ test('bulk user upload', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(result.status, 201, JSON.stringify(result.body));
     assert.strictEqual(result.body.skipped, 0);
     assert.strictEqual(result.body.created, 3);
-    assert.ok(result.body.temporaryPassword, 'rows without a password should report the temporary one');
+    /* NO PASSWORD IN THE BODY. It carried `temporaryPassword` for the page to
+       print; `usedDefault` now says that some rows got the default without
+       saying what it is. The next subtest proves the accounts can actually sign
+       in with it, which is the part that matters. */
+    assert.strictEqual(result.body.temporaryPassword, undefined,
+      'the import response is still handing the password back');
+    assert.strictEqual(result.body.usedDefault, true,
+      'rows without a password should report that they got the default');
+    assert.ok(!JSON.stringify(result.body).includes(IMPORT_DEFAULT),
+      'the password is somewhere in the import response');
   });
 
   await t.test('an imported account can sign in with the role from the file', async () => {
     const login = await call('/auth/login', {
-      method: 'POST', body: { email: 'priya.raman@zvky.com', password: 'zvky2026' },
+      method: 'POST', body: { email: 'priya.raman@zvky.com', password: IMPORT_DEFAULT },
     });
     assert.strictEqual(login.status, 200, JSON.stringify(login.body));
     assert.strictEqual(login.body.user.role, 'senior_game_artist');
@@ -218,7 +238,7 @@ test('bulk user upload', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
   await t.test('a project named in the file actually attaches the account', async () => {
     const login = await call('/auth/login', {
-      method: 'POST', body: { email: 'lead.person@zvky.test', password: 'zvky2026' },
+      method: 'POST', body: { email: 'lead.person@zvky.test', password: IMPORT_DEFAULT },
     });
     const projects = await call('/projects', { token: login.body.token });
     assert.ok(projects.body.projects.some((p) => p.name === projectName),

@@ -22,42 +22,65 @@ const test = require('node:test');
 const assert = require('node:assert');
 const catalog = require('../src/permission-catalog');
 const policy = require('../src/password-policy');
+const crypto = require('node:crypto');
 const rolePermissions = require('../src/role-permissions');
 const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
 
 const cfg = config('passwordReset');
 
-/* What a reset sets a password to. One value, shared with account creation —
-   see DEFAULT_PASSWORD in src/routes/users.js, including what it costs. */
-const FIXED = process.env.DEFAULT_USER_PASSWORD || 'zvky2026';
+/* WHAT A RESET SETS A PASSWORD TO, GENERATED FRESH FOR THIS RUN.
+ *
+ * There was a literal here, read from the environment with a fallback to the
+ * one in the source. Both are gone: the value is now configured per deployment
+ * and sealed, and a test that knew a real one would put it back in the
+ * repository. So this suite makes one up, hands it to the server through the
+ * environment (the documented fallback source), and tests/password-default
+ * scans the whole repository and this run's output for it.
+ *
+ * It MEETS the policy, deliberately. The old fixed value did not, and the suite
+ * asserted that it did not — which was true and is no longer the shape of the
+ * thing: a configured default is checked against the policy before it is
+ * stored, because a default that could skip the rules would be a weak password
+ * on every account anybody ever resets. */
+const FIXED = `Rs-${crypto.randomBytes(9).toString('base64url')}-7a!`;
 
-test('a reset sets ONE FIXED VALUE, which is the studio\'s decision and its cost', () => {
-  /* This used to assert a generated one-off. The studio asked for a single
-     fixed password instead — the same one a new account is created with — so
-     what is asserted now is that decision and the two things that follow from
-     it, both of which somebody reading this later needs to see stated rather
-     than discover.
-
-     ONE: the generator is gone rather than left exported and unused, because a
-     function nothing calls is one the next reader assumes is live. */
+test('a reset sets ONE CONFIGURED VALUE, and the value is nowhere in the source', () => {
+  /* THE HISTORY, because this assertion has now been inverted twice and a
+     reader deserves the sequence:
+     
+       1. a GENERATED one-off per reset. The generator was policy.temporaryPassword.
+       2. ONE FIXED VALUE, at the studio's request, so an administrator had one
+          convention rather than two — hard-coded in src/routes/users.js with a
+          note admitting that "a fixed value in the source is a value everybody
+          with the repository knows".
+       3. ONE CONFIGURED VALUE, sealed under EMAIL_ENCRYPTION_KEY, which is this.
+     
+     Step 2's honesty is what made step 3 obvious. */
   assert.strictEqual(policy.temporaryPassword, undefined,
     'the generator was removed when nothing called it any more');
 
-  /* TWO: the fixed value does NOT meet the studio's own password policy, and is
-     not supposed to. It is a credential with one use, which the policy is then
-     enforced on — the change endpoint checks the NEW password, never the
-     current one. Pinned so that a later change to either the value or the rules
-     is a deliberate act rather than a surprise. */
-  assert.strictEqual(policy.check(FIXED).valid, false,
-    'it is below the policy, which is why the account is locked until it is replaced');
-
-  /* And it is settable per deployment, which is the only thing that stops the
-     value being whatever is printed in a public repository. */
+  /* THE LITERAL IS GONE FROM THE SOURCE, which is the whole of step 3. Asserted
+     against the file that held it rather than against a grep of everything —
+     tests/password-default.test.js does the repository-wide scan. */
   const source = require('fs').readFileSync(
     require('path').join(__dirname, '..', 'src', 'routes', 'users.js'), 'utf8');
-  assert.match(source, /process\.env\.DEFAULT_USER_PASSWORD \|\| 'zvky2026'/);
-  assert.match(source, /take over a just-reset account/i,
-    'and the risk it carries is written down beside it');
+  /* COMMENTS STRIPPED FIRST. The note that records what was removed quotes the
+     declaration verbatim, because that quote is the history worth keeping — and
+     a regex over the raw file matched it and reported the literal as back. */
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/DEFAULT_PASSWORD\s*=/.test(code),
+    'src/routes/users.js declares a default password constant again');
+  assert.ok(!/DEFAULT_USER_PASSWORD/.test(code),
+    'src/routes/users.js reads the environment directly again instead of asking the resolver');
+  assert.match(source, /require\('\.\.\/default-password'\)/,
+    'and asks the one resolver for it instead');
+
+  /* AND A CONFIGURED DEFAULT MUST MEET THE POLICY, which is the rule that
+     replaced "the fixed value is deliberately below it". */
+  const settings = require('../src/reset-password-settings');
+  assert.strictEqual(settings.validateDefault('short').ok, false);
+  assert.strictEqual(settings.validateDefault(FIXED).ok, true,
+    'this run\'s generated value is policy-clean, as a configured one must be');
 });
 
 test('the permission is Super Admin only, and the action is no longer pending', () => {
@@ -90,7 +113,13 @@ test('resetting a password', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
   t.before(async () => {
     await resetSchema(cfg);
-    server = await startServer(cfg, { BOOTSTRAP_TOKEN: 'reset-token' });
+    /* THIS RUN'S VALUE REACHES THE SERVER THROUGH THE ENVIRONMENT, which is the
+       documented second source (src/default-password.js). Using it rather than
+       the Settings route keeps this suite about the RESET; the configured path,
+       the sealing and the leak scan are tests/password-default.test.js. */
+    server = await startServer(cfg, {
+      BOOTSTRAP_TOKEN: 'reset-token', DEFAULT_USER_PASSWORD: FIXED,
+    });
     await call('/auth/bootstrap', { method: 'POST',
       body: { token: 'reset-token', name: 'Root', email: 'root@zvky.test', password: PASSWORD } });
     token.root = (await login('root@zvky.test', PASSWORD)).body.token;
@@ -149,13 +178,21 @@ test('resetting a password', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   await t.test('the Super Admin resets it, and the account is locked to the change', async () => {
     const res = await as('root', `/users/${people.ana}/reset-password`, { method: 'POST' });
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
-    const temporary = res.body.temporaryPassword;
-    assert.strictEqual(temporary, FIXED,
-      'the studio\'s standing password, not a generated one');
-    /* Deliberately NOT policy-valid — see the note at the top of this file. It
-       is accepted as the CURRENT password on the way out of the lock, and the
-       policy is enforced on whatever replaces it. */
-    assert.strictEqual(policy.check(temporary).valid, false);
+
+    /* THE BODY CARRIES NO PASSWORD. It used to return `temporaryPassword` for
+       the page to print; the admin is now told the reset used the default and
+       nothing that could be screenshotted or logged by a proxy. */
+    assert.strictEqual(res.body.temporaryPassword, undefined,
+      'the reset response is still handing the password back');
+    assert.ok(!JSON.stringify(res.body).includes(FIXED),
+      'the password is somewhere in the reset response');
+    assert.match(res.body.message, /default password/i);
+    assert.match(res.body.message, /sign in and change it/i);
+    assert.strictEqual(res.body.usedDefault, true);
+
+    /* The test knows the value because it generated it and handed it to the
+       server; nothing it received told it. */
+    const temporary = FIXED;
 
     // The old one is dead, and the old session with it.
     assert.strictEqual((await login('ana@zvky.test', PASSWORD)).status, 401);
@@ -198,16 +235,25 @@ test('resetting a password', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const first = await as('root', `/users/${people.ana}/reset-password`, { method: 'POST' });
     const second = await as('root', `/users/${people.ana}/reset-password`, { method: 'POST' });
     const other = await as('root', `/users/${people.lee}/reset-password`, { method: 'POST' });
-    assert.strictEqual(first.body.temporaryPassword, FIXED);
-    assert.strictEqual(second.body.temporaryPassword, FIXED, 'the same account twice');
-    assert.strictEqual(other.body.temporaryPassword, FIXED, 'and a different account');
+    for (const [label, r] of [['first', first], ['second', second], ['other account', other]]) {
+      assert.strictEqual(r.status, 200, `${label}: ${JSON.stringify(r.body)}`);
+      assert.ok(!JSON.stringify(r.body).includes(FIXED), `${label} leaked the password`);
+    }
+    /* THE SAME VALUE EVERY TIME, proved by using it rather than by reading it
+       back: each of the three accounts signs in with it. */
+    assert.strictEqual((await login('ana@zvky.test', FIXED)).status, 200, 'the same account twice');
+    assert.strictEqual((await login('lee@zvky.test', FIXED)).status, 200, 'and a different account');
 
     /* It is the same string a NEW account is created with, which is the other
-       half of what was asked for: one convention, not two. */
+       half of what was asked for: one convention, not two — and that response
+       carries no password either. */
     const made = await as('root', '/users', { method: 'POST',
       body: { name: 'fresh', email: 'fresh@zvky.test', role: 'game_artist' } });
     assert.strictEqual(made.status, 201, JSON.stringify(made.body));
-    assert.strictEqual(made.body.temporaryPassword, FIXED,
+    assert.strictEqual(made.body.temporaryPassword, undefined,
+      'creating an account is still handing the password back');
+    assert.strictEqual(made.body.usedDefault, true);
+    assert.strictEqual((await login('fresh@zvky.test', FIXED)).status, 200,
       'creating an account and resetting one hand over the same thing');
 
     await restore('ana');
@@ -258,7 +304,9 @@ test('resetting a password', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
     const allowed = await as('mel', `/users/${people.ana}/reset-password`, { method: 'POST' });
     assert.strictEqual(allowed.status, 200, JSON.stringify(allowed.body));
-    assert.ok(allowed.body.temporaryPassword);
+    /* NO PASSWORD IN THE BODY any more; what proves the reset happened is that
+       the account now says it must change, which only a reset sets. */
+    assert.strictEqual(allowed.body.usedDefault, true);
 
     // Put ana back.
     const t2 = (await login('ana@zvky.test', allowed.body.temporaryPassword)).body.token;

@@ -2469,11 +2469,11 @@ npm run seed
 ```
 
 The seed script creates:
-- 1 super admin — `ava@zvky.studio` / `superadmin`
+- 1 super admin — `ava@zvky.studio` / the seed password (see below)
 - 3 art directors, 15 admins, 40 leads spread across the five supervisory
   designations, 44 production coordinators, and 400 contributors spread across
   the twelve artist/animator/designer designations — all
-  `<their email>` / `zvky2026`
+  `<their email>` / the seed password (see below)
 - 4 sample projects with assets at every stage of the review pipeline (including a couple already sitting in TL/CD review or kicked back with changes requested, so you can see the workflow immediately)
 
 It refuses to run again once the `users` table has data, so it's safe against
@@ -2482,13 +2482,40 @@ accidental double-seeding. To start over, drop and recreate the schema.
 **Change the demo passwords before this touches anything real.** They're
 deliberately simple for testing the permission model, not for production use.
 
-`zvky2026` is also the standing value used in two live paths: the password a new
-account is created with, and the one a Super Admin's **Reset password** sets an
-existing account back to. Both lock the account until it chooses a new one, so
-the value cannot be used to work — but it can be used to make that change, which
-means anybody who knows it and somebody's email could take over a just-created or
-just-reset account before its owner signs in. Set `DEFAULT_USER_PASSWORD` in
-the deployment's environment variables so the value on your deployment is not the one printed here.
+### The default password a reset gives out
+
+An administrator's **Reset password** sets the account to one default password,
+and the account must then choose a new one. That default is **configured, not
+compiled in**: a Super Admin sets it in **Settings → Password reset**, where it
+is stored encrypted under `EMAIL_ENCRYPTION_KEY` and is never shown again — not
+on that screen, not in the audit log, not in any API response, not to a Super
+Admin. Changing it is the only way to learn what it is.
+
+There is deliberately **no default value in this repository**. A shared password
+written into the source is in every clone, every fork and every code-search
+index, and setting an environment variable afterwards does not remove it. If no
+default is configured, Forge falls back to `DEFAULT_USER_PASSWORD` from the
+environment, and if that is unset it refuses the reset and says what to set —
+rather than reaching for a value that ships with the application.
+
+Three things narrow what a shared default costs, and none of them closes it:
+
+- **The forced change.** While `must_change_password` is set the API answers
+  nothing but the change itself, so the default cannot be used to work.
+- **The expiry.** *Default password stays valid for* (hours, 0–720, 72 by
+  default) is how long after the reset it still signs the account in. After
+  that the account must be reset again. `0` means no expiry.
+- **It is never written down.** Not in a log line, an audit entry, a
+  notification or a response body.
+
+What remains: anybody who knows the default and somebody's email can take over a
+just-reset account in the window before its owner signs in. Tell the person
+promptly, and keep the expiry short.
+
+The **seed script's** demo accounts are a separate thing and are for development
+only. It reads the password to give them from `SEED_PASSWORD` or
+`DEFAULT_USER_PASSWORD` and refuses to run without one, so there is no demo
+password in this repository either.
 
 ## 6. Run it
 
