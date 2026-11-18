@@ -3268,8 +3268,10 @@ async function sendHandoff(req, res, forced) {
            of the same id in one request is a mistake, not two things to integrate, and the
            de-duplication above means this only fires on a genuine collision. */
         if (err.code !== 'ER_DUP_ENTRY') throw err;
-        results.push({ id: asset.id, code: asset.code, outcome: 'skipped',
-          reason: 'already in this hand-off at the same round' });
+        results.push({ id: asset.id, code: asset.code, name: asset.name,
+          outcome: 'skipped', ok: false, skipped: true,
+          reason: 'already in this hand-off at the same round',
+          error: 'already in this hand-off at the same round' });
         continue;
       }
 
@@ -3292,7 +3294,29 @@ async function sendHandoff(req, res, forced) {
           + `${bugRefs.length ? ` — fixes ${bugRefs.join(', ')}` : ''}`
           + `${String(body.note || '').trim() ? `: ${String(body.note).trim()}` : ''}`]
       );
-      results.push({ id: asset.id, code: asset.code, outcome: 'sent', round,
+      /* `ok: true` AS WELL AS `outcome: 'sent'`, AND THIS IS THE BUG THIS CARRIES.
+       *
+       * public/index.html's bulkResultsHTML() is shared by all three bulk actions and
+       * reads r.ok, r.skipped and r.error — the shape /bulk/deliver and /bulk/assign have
+       * always returned. This route returned `outcome` and `reason` instead, so for every
+       * successfully sent asset r.ok was undefined, the renderer's ternary fell through to
+       * its last branch, and the modal printed
+       *
+       *     REFUSED  COLORE-030
+       *
+       * in the danger colour with an empty reason underneath — on a hand-off that had been
+       * created, evented, outboxed and written into the asset's history. Nothing was
+       * refused and nothing was wrong with the asset's stage; the two halves of one feature
+       * disagreed about the name of a field.
+       *
+       * BOTH SHAPES ARE SENT, which is deliberate rather than untidy. `ok`/`skipped`/
+       * `error` is what the page's shared renderer understands and is now the shape of
+       * record; `outcome`/`reason` is what this route has answered since it was written and
+       * what tests/send-to-dev.test.js and tests/send-to-tech-art.test.js read, so removing
+       * it would be a breaking change to the response for no gain. They are written here,
+       * together, from one push — so they cannot disagree. */
+      results.push({ id: asset.id, code: asset.code, name: asset.name,
+        outcome: 'sent', ok: true, round,
         discipline: disciplineOf(asset) });
     }
 
@@ -3346,7 +3370,12 @@ async function sendHandoff(req, res, forced) {
     conn.release();
   }
 
-  for (const id of missing) results.push({ id, outcome: 'failed', reason: 'No such asset' });
+  /* A genuinely invalid id: refused, and it SHOULD read as refused. Same two shapes as
+     above, so the renderer colours this one red for a real reason. */
+  for (const id of missing) {
+    results.push({ id, outcome: 'failed', ok: false,
+      reason: 'No such asset', error: 'No such asset' });
+  }
 
   /* NOT RECORDED HERE. The activityLogger mounted on /api in src/server.js already records
      every POST, PUT, PATCH and DELETE that answers under 400 — that is the coverage
