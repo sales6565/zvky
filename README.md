@@ -6828,11 +6828,73 @@ fails it.
 | `handoff_assets` | what is in it: asset + round, the bug refs a fix resolves, and Dev & QA's `status` (`queued` / `received` / `integrated` / `returned`) |
 | `external_feedback` | a bug from outside — source, reference, severity, note, sender, build, CP stage, link, plus `prev_status` and `prev_routed_to_id` |
 | `asset_ingame` | one row per asset: build, CP stage, engine status, open bug count, link, `in_game_build_seq` |
-| `assets.needs_tech_art` | boolean, default false |
+| `assets.needs_tech_art` | boolean, default false — **legacy, read-only.** See below |
 
 Every status column is `VARCHAR` with a default, matching the eight others in this
 schema — not `state`, not an `ENUM`, so a fifth value later is a row's value rather
 than a migration.
+
+### Send to Dev, Send to Tech Art — two buttons, one mechanism
+
+On the Assets List, tick some assets and there are two actions side by side:
+**Send to Dev** and **Send to Tech Art**. They are the same send to the same place
+(Dev & QA) with a different **destination**, and the destination is the button, not
+a field somebody fills in afterwards.
+
+| | Route | Permission | Stored as | Published as |
+|---|---|---|---|---|
+| Send to Dev | `POST /api/assets/bulk/send-to-dev` | `integration.send_to_dev` | `handoffs.kind = 'partial_drop'` | `destination: "development"` |
+| Send to Tech Art | `POST /api/assets/bulk/send-to-tech-art` | `integration.send_to_tech_art` | `handoffs.kind = 'tech_art'` | `destination: "tech_art"` |
+
+**`destination` is derived from `kind`, not stored beside it.** `handoffs.kind` has
+held these two values since hand-offs were built; what was missing was the word, so
+`src/handoff-destination.js` names it and nothing was migrated. A new nullable column
+would have read as "Development" for every Tech Art hand-off already in the table —
+the exact rows whose destination matters — so the choice was a derivation or a
+backfill, and a derivation cannot be wrong about history.
+
+**Both routes accept either field.** `destination` is what the contract publishes now;
+`kind` is what the previous one took and still works, and a request naming neither is
+a partial drop, which is what every such request has always been. A value that is
+neither is refused rather than defaulted — the point of the field is that the sender
+chose.
+
+**The permission belongs to the destination, not to the path.** `/bulk/send-to-dev`
+still accepts a body asking for Tech Art, so it checks `integration.send_to_tech_art`
+when that is where the request is going. A direct API call is not a way round the key.
+
+**Discipline is not destination.** The event carries both, separately: the hand-off's
+`destination` (where it went) and each asset's `discipline` — `art` or `animation`, from
+`src/asset-discipline.js`, a fact about the work. An animation sent to Development is
+still an animation. One drop can carry both disciplines at once, which is the case no
+implementation that inferred one from the other could produce.
+
+Note the word `destination` is used for something else on the inbound side:
+`external_feedback.destination` holds `art` or `animation` — the department Dev & QA
+addresses a piece of feedback to. Same word, different object, disjoint values;
+`tests/handoff-destination.test.js` asserts the two value spaces can never overlap.
+
+### What happened to "Needs a Tech Art pass"
+
+There used to be a tick box on the asset drawer, behind `integration.flag_tech_art`,
+writing `assets.needs_tech_art` through `PATCH /api/assets/:id/tech-art`. Its own
+route said what it bought: *"A FLAG AND A FILTER, NOT A SEND. Ticking this marks the
+asset and tells nobody."* Routing work to another team on the chance that somebody
+later filtered for it is not routing, so **the tick box and its route are both gone**
+and Send to Tech Art replaced them.
+
+What survives, and why:
+
+- **The column stays.** Historical rows keep their value, and `src/routes/integration.js`
+  still publishes it to Dev & QA as `needsTechArt` — part of a contract this change had
+  no business breaking. Nothing writes it any more and nothing routes on it.
+- **No hand-off was created by the upgrade.** An asset that was flagged before this
+  release is not handed to Tech Art because the software changed; somebody presses the
+  button. `tests/send-to-tech-art.test.js` asserts that explicitly.
+- **It is still visible, read-only** — as a line on the drawer and a chip in the send
+  modal — on an asset that carries one, because that is where somebody would act on it.
+- **`integration.flag_tech_art` is kept and marked pending.** It gates nothing now.
+  Retiring it is a decision about the column, which is a separate change.
 
 **Two guards worth knowing about.** `external_feedback` has
 `UNIQUE (asset_id, round, source, bug_ref)`: a retried call — the normal behaviour of

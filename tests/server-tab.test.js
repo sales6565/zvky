@@ -276,8 +276,47 @@ test('PRODUCTION SAFETY: the submit route is exactly what it was', () => {
     assert.ok(to > from, 'the asset-name routes end before DELETE /api/assets/:id');
     return text.slice(0, from) + text.slice(to);
   };
-  const mine = code(withoutNameRoutes(assets));
-  const theirs = code(withoutNameRoutes(before));
+  /* THE HAND-OFF ROUTES, EXCLUDED AS A BLOCK for the same reason and in the same shape as
+   * the asset-name routes above.
+   *
+   * Prompt 72 turned one Send to Dev action with a hidden dropdown into two explicit ones,
+   * Send to Dev and Send to Tech Art. On this file that is a rewritten handler (the body
+   * became a shared sendHandoff() that two routes call), a destination resolved through
+   * src/handoff-destination.js, a discipline read through src/asset-discipline.js, and the
+   * deletion of PATCH /:id/tech-art, whose tick box has come off the asset drawer.
+   *
+   * Listing that line by line in REMOVED_OK and ADDITIVE below was the first attempt and
+   * it ran to about forty entries of prose — "a list nobody could read and nobody would
+   * keep", exactly as the note above says. A bounded block is more honest.
+   *
+   * WHAT IT DOES NOT WEAKEN. The bounds are asserted to exist and to be in order, so the
+   * block cannot quietly grow. It spans the two bulk send routes, the hand-off cancel
+   * route and the comment left where the Tech Art flag route was — and NOTHING ELSE. The
+   * two endpoints this test exists to protect are both outside it: POST /:id/submit is
+   * several hundred lines earlier, and GET /versions/:versionId/download ends on the line
+   * before the block begins, which is checked below rather than assumed. Everything
+   * outside the block is still compared line for line against the commit before the
+   * office file server.
+   *
+   * Neither protected endpoint calls anything in here, reads `handoffs`, or reads
+   * `needs_tech_art`; the change adds two requires at the top of the file, and those are
+   * outside the block and accounted for in ADDITIVE. */
+  const withoutHandoffRoutes = (text) => {
+    const marker = text.indexOf('/bulk/send-to-dev');
+    if (marker === -1) return text;
+    const from = text.lastIndexOf('\n', marker) + 1;
+    const to = text.indexOf('/* GET /api/assets/:id/game-feedback', from);
+    assert.ok(to > from, 'the hand-off routes end before GET /:id/game-feedback');
+    /* THE LEGACY DOWNLOAD MUST END BEFORE THE BLOCK STARTS. If the bound ever drifted
+       upwards far enough to swallow it, this is what would say so — the route this test
+       protects would stop being compared and nothing else would notice. */
+    const download = text.indexOf('res.download(filePath, version.file_name);');
+    assert.ok(download !== -1 && download < from,
+      'the legacy download route is outside the excluded hand-off block');
+    return text.slice(0, from) + text.slice(to);
+  };
+  const mine = code(withoutHandoffRoutes(withoutNameRoutes(assets)));
+  const theirs = code(withoutHandoffRoutes(withoutNameRoutes(before)));
   if (mine !== theirs) {
     /* Named, so a failure says WHICH line moved rather than "they differ".
        Two lines are expected to differ and both are additive: the two requires
@@ -325,6 +364,11 @@ test('PRODUCTION SAFETY: the submit route is exactly what it was', () => {
       '  if (assetSchedule.startsInFuture(asset)) {',
       '      error: assetSchedule.notYetMessage(asset),',
       '      startsOn: assetSchedule.asISODate(asset.start_date),',
+      /* PROMPT 72'S LINES ARE NOT LISTED HERE, and that is deliberate: every one of them
+       * is inside the hand-off block excluded above, so this guard no longer compares
+       * them at all. Seventeen entries were written out here first; the block replaced
+       * them, because a list of seventeen rewritten lines says less about what changed
+       * than four lines of bounds and a reason do. */
     ];
     const lost = removed.filter((line) => !REMOVED_OK.includes(line));
     assert.deepStrictEqual(lost, [], `the submit route lost code: ${lost.join(' | ')}`);
@@ -362,6 +406,12 @@ test('PRODUCTION SAFETY: the submit route is exactly what it was', () => {
          the read-only Game feedback panel, gains one read and one field for the chip;
          no existing line changed. The submit route reads neither. */
       [/destinationOf/, 'the Game feedback panel shows the department Dev & QA asked for'],
+      /* Prompt 72's two requires, and the only lines of it outside the excluded block.
+       * Both are pure functions over values the caller already has — one maps a hand-off's
+       * stored `kind` to 'development' or 'tech_art', the other answers art or animation
+       * from an asset's type and category. Neither touches the database, the filesystem or
+       * a request, and neither is called from the submit route or the legacy download. */
+      [/handoff-destination|asset-discipline/, 'Prompt 72: the hand-off destination and the discipline rule'],
     ];
     for (const line of added) {
       const why = ADDITIVE.find(([re]) => re.test(line));

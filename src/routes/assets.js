@@ -71,6 +71,8 @@ const holdLog = require('../hold-log');
 const rolePermissions = require('../role-permissions');
 const submissionLink = require('../submission-link');
 const referenceData = require('../reference-data');
+const handoffDestination = require('../handoff-destination');
+const { assetDiscipline } = require('../asset-discipline');
 const integrationEvents = require('../integration-events');
 const feedbackLifecycle = require('../feedback-lifecycle');
 
@@ -3121,14 +3123,28 @@ router.get('/versions/:versionId/download', async (req, res) => {
   res.download(filePath, version.file_name);
 });
 
-/* POST /api/assets/bulk/send-to-dev — a partial drop or a Tech Art hand-off to Dev & QA.
+/* POST /api/assets/bulk/send-to-dev and /bulk/send-to-tech-art — sending work out of
+ * the studio, to Development or to Tech Art.
+ *
+ * Two routes, one body of work. POST /bulk/send-to-dev and POST /bulk/send-to-tech-art
+ * both end up here, because everything that makes a hand-off a hand-off — one project, the
+ * round, the four writes in one transaction — is the same wherever it is going. What
+ * differs is the destination and the permission, and those are the two things the entry
+ * points below settle before this runs.
+ *
+ * WHY TWO ROUTES RATHER THAN ONE WITH A FIELD. The field exists and still works: a body
+ * naming `destination` or the older `kind` is honoured on either path, which is what keeps
+ * every existing caller going. But a route per destination is what lets each one carry its
+ * own requirePermission, declared where scripts/route-guards.js can read it, instead of a
+ * permission decided inside a handler from the body — which is the shape that makes an
+ * audit of "what guards this?" answerable.
  *
  * Under /bulk/ because that is where this application's bulk actions live — /bulk/deliver
  * and /bulk/assign are the two beside it — and a third one somewhere else would be a third
  * place to look.
  *
- * body: { assetIds: [], kind: 'partial_drop' | 'tech_art', label?, note?, bugRefs?,
- *         build?, cpStage? }
+ * body: { assetIds: [], destination?: 'development' | 'tech_art',
+ *         kind?: 'partial_drop' | 'tech_art', label?, note?, bugRefs?, build?, cpStage? }
  *
  * ONE TRANSACTION, four kinds of write, and each one exists for a reader that would
  * otherwise be blind:
@@ -3144,14 +3160,43 @@ router.get('/versions/:versionId/download', async (req, res) => {
  * THE ROUND IS RECORDED, NEVER INVENTED — currentRound() is the submission count, the same
  * definition the Efficiency report uses. Nothing here creates a round.
  */
-router.post('/bulk/send-to-dev', requirePermission('integration.send_to_dev'), async (req, res) => {
+async function sendHandoff(req, res, forced) {
   const body = req.body || {};
   const ids = [...new Set((Array.isArray(body.assetIds) ? body.assetIds : [])
     .map((x) => String(x || '').trim()).filter(Boolean))];
   if (!ids.length) return res.status(400).json({ error: 'Choose at least one asset.', field: 'assetIds' });
 
-  const KINDS = ['partial_drop', 'tech_art'];
-  const kind = KINDS.includes(String(body.kind || '').trim()) ? String(body.kind).trim() : 'partial_drop';
+  /* WHERE THIS IS GOING, from one module and not from this route's own reading of the
+     body. src/handoff-destination.js takes `destination` or the older `kind`, prefers the
+     first, defaults to Development when neither is given — which is what every request
+     written before this change was — and returns null for a value that is neither. */
+  const wanted = forced
+    ? handoffDestination.definitionOf(forced)
+    : handoffDestination.resolve(body);
+  if (!wanted) {
+    return res.status(400).json({
+      error: `Send it to ${handoffDestination.IDS.join(' or ')}.`,
+      field: body.destination ? 'destination' : 'kind',
+    });
+  }
+  const destination = wanted.id;
+  const kind = wanted.kind;
+
+  /* THE SECOND KEY, CHECKED HERE AND NOT ONLY AT THE DOOR.
+   *
+   * /bulk/send-to-dev still accepts a body asking for Tech Art, because it always did and
+   * a caller that sends `kind: 'tech_art'` must keep working. What it must not do is let
+   * that caller round the new permission: the key belongs to the destination, not to the
+   * path it arrived on. So whichever route this came in by, the key for where it is
+   * actually going is required. Asked with can() rather than a middleware because the
+   * answer depends on the body, which no middleware has read yet. */
+  const needed = handoffDestination.permissionFor(destination);
+  if (needed && !can(req, needed)) {
+    return res.status(403).json({
+      error: `You do not have permission to ${wanted.action.toLowerCase()}.`,
+      permission: needed,
+    });
+  }
 
   /* Bug references as given, normalised and de-duplicated. Identifiers in somebody else's
      tracker: this cannot validate them and does not pretend to. */
@@ -3160,8 +3205,12 @@ router.post('/bulk/send-to-dev', requirePermission('integration.send_to_dev'), a
     : String(body.bugRefs || '').split(','))
     .map((x) => String(x || '').trim()).filter(Boolean))];
 
+  /* `type` AND `category` ARE SELECTED FOR ONE REASON: assetDiscipline() reads them.
+     The hand-off payload has to say whether each asset is art or animation, and the only
+     module allowed to answer that is src/asset-discipline.js — which needs the type and
+     the category key, not a guess from the name. */
   const { rows: assets } = await db.query(
-    'SELECT id, project_id, `code`, `name`, `status` FROM assets WHERE id IN ($1)', [ids]
+    'SELECT id, project_id, `code`, `name`, `status`, `type`, category FROM assets WHERE id IN ($1)', [ids]
   );
   if (!assets.length) return res.status(404).json({ error: 'None of those assets exist.' });
 
@@ -3181,6 +3230,12 @@ router.post('/bulk/send-to-dev', requirePermission('integration.send_to_dev'), a
 
   const found = new Set(assets.map((a) => a.id));
   const missing = ids.filter((id) => !found.has(id));
+
+  /* THE MAP ONCE, NOT PER ASSET. assetDiscipline() takes either the category list or the
+     Map built from it; built here so a drop of forty assets builds it once, which is the
+     shape that module's own comment asks for. */
+  const categoryDisciplines = referenceData.categoryDisciplines();
+  const disciplineOf = (asset) => assetDiscipline(asset, categoryDisciplines);
 
   const handoffId = uuid();
   const results = [];
@@ -3224,12 +3279,21 @@ router.post('/bulk/send-to-dev', requirePermission('integration.send_to_dev'), a
         `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id,
                                    actor_email, note)
          VALUES ($1,$2,'sent_to_dev',$3,$3,$4,$5,$6)`,
+        /* THE NOTE SAYS WHERE IT WENT, FIRST.
+         *
+         * "Sent to Tech Art — Tech Art hand-off" rather than only the second half. The
+         * history is where somebody goes to find out which button was pressed, and the
+         * old wording described the kind of parcel without naming the recipient. The
+         * original phrase is kept after it, because it is what the studio has read on
+         * every hand-off since the feature shipped and because the asset's own History
+         * panel shows these notes verbatim. */
         [uuid(), asset.id, asset.status, req.user.id, req.user.email,
-          `${kind === 'tech_art' ? 'Tech Art hand-off' : 'Partial drop'}`
+          `${wanted.sent} — ${kind === 'tech_art' ? 'Tech Art hand-off' : 'Partial drop'}`
           + `${bugRefs.length ? ` — fixes ${bugRefs.join(', ')}` : ''}`
           + `${String(body.note || '').trim() ? `: ${String(body.note).trim()}` : ''}`]
       );
-      results.push({ id: asset.id, code: asset.code, outcome: 'sent', round });
+      results.push({ id: asset.id, code: asset.code, outcome: 'sent', round,
+        discipline: disciplineOf(asset) });
     }
 
     /* AND THE MESSAGE, in this same transaction. This was in the agreed message list and
@@ -3246,13 +3310,29 @@ router.post('/bulk/send-to-dev', requirePermission('integration.send_to_dev'), a
         payload: {
           handoffId,
           projectId: projects[0],
+          /* BOTH, AND THEY CANNOT DISAGREE: `destination` is what this contract publishes
+             now ('development' or 'tech_art'), `kind` is the field it has always carried
+             and is what the column holds. Both come from one resolved definition, so a
+             receiver reading either gets the same answer, and a receiver written against
+             the old payload is not broken by the new field. */
+          destination,
           kind,
           label: String(body.label || '').trim() || null,
           build: String(body.build || '').trim() || null,
           cpStage: String(body.cpStage || '').trim() || null,
           note: String(body.note || '').trim() || null,
           bugRefs,
-          assets: sent.map((r) => ({ id: r.id, code: r.code, name: (assets.find((a) => a.id === r.id) || {}).name || null, round: r.round })),
+          /* DISCIPLINE PER ASSET, from src/asset-discipline.js — and deliberately not
+             inferred from the destination. One drop can carry an animation and a prop;
+             the destination is one choice about the parcel, the discipline is a fact
+             about each thing in it. */
+          assets: sent.map((r) => ({
+            id: r.id,
+            code: r.code,
+            name: (assets.find((a) => a.id === r.id) || {}).name || null,
+            round: r.round,
+            discipline: r.discipline,
+          })),
           sentBy: req.user.email,
           sentAt: new Date().toISOString(),
         },
@@ -3273,8 +3353,27 @@ router.post('/bulk/send-to-dev', requirePermission('integration.send_to_dev'), a
      guarantee, asserted by a test, and this file records nothing by hand precisely because
      of it. An explicit call would be a second entry for one action, and a second place for
      the wording to drift from every other route's. */
-  res.status(201).json({ handoffId, kind, bugRefs, results });
-});
+  return res.status(201).json({ handoffId, destination, kind, bugRefs, results });
+}
+
+/* THE TWO DOORS.
+ *
+ * Each carries its own key, declared here where scripts/route-guards.js reads it, and both
+ * run exactly the same send. The destination is settled before the handler: the Tech Art
+ * route forces it, and the Dev route leaves it to the body so that a caller sending the
+ * older `kind` field still reaches either one.
+ *
+ * TWO KEYS AND NOT ONE, which is the decision the brief asked for. Dropping work into the
+ * build and booking Tech Art's time are different asks of different teams, and a studio
+ * that wants a lead to do the first without the second can now say so. Nobody loses what
+ * they have today: integration.send_to_tech_art ships implied by the same predicate as
+ * integration.send_to_dev, so every designation that could send a Tech Art hand-off
+ * through the old dropdown can still press the new button — asserted in
+ * tests/send-to-tech-art.test.js rather than left as a claim. */
+router.post('/bulk/send-to-dev', requirePermission('integration.send_to_dev'),
+  (req, res) => sendHandoff(req, res, null));
+router.post('/bulk/send-to-tech-art', requirePermission('integration.send_to_tech_art'),
+  (req, res) => sendHandoff(req, res, 'tech_art'));
 
 /* POST /api/assets/handoffs/:id/cancel — withdraw a hand-off sent by mistake.
  *
@@ -3315,34 +3414,34 @@ router.post('/handoffs/:id/cancel', requirePermission('integration.send_to_dev')
   res.json({ ok: true, cancelled: true });
 });
 
-/* PATCH /api/assets/:id/tech-art — mark an asset as needing a Tech Art pass, or not.
+/* THERE WAS A PATCH /api/assets/:id/tech-art HERE, AND IT IS DELIBERATELY GONE.
  *
- * A FLAG AND A FILTER, NOT A SEND. Ticking this marks the asset and tells nobody: nothing
- * reaches Dev & QA until somebody uses Send to Dev, which they may well do after filtering
- * on this flag. Its own route rather than a field on the general PATCH because it is its
- * own permission — integration.flag_tech_art is held by artists, who cannot edit an asset
- * otherwise, and folding it into the edit route would have meant either widening that
- * route or denying the flag to the people most likely to know it is needed.
+ * It set assets.needs_tech_art, behind integration.flag_tech_art, for the "Needs a Tech
+ * Art pass" tick box in the asset drawer. Its own comment described what it was: "A FLAG
+ * AND A FILTER, NOT A SEND. Ticking this marks the asset and tells nobody: nothing reaches
+ * Dev & QA until somebody uses Send to Dev, which they may well do after filtering on this
+ * flag."
+ *
+ * That sentence is the reason it went. Routing work to Tech Art depended on one person
+ * ticking a box and a different person noticing — a hand-off with no recipient, no time
+ * and nobody accountable for the gap between the two. POST /bulk/send-to-tech-art is the
+ * same intention stated as an act: it goes to a team, at a moment, from a named sender,
+ * and Dev & QA are told.
+ *
+ * THE ROUTE IS REMOVED AND NOT LEFT IN PLACE, because leaving it would leave a second way
+ * to edit the thing whose edit control has just been taken off the screen — an API path
+ * the page no longer calls and nothing documents, still writing a column nothing reads for
+ * routing. The brief asks for one path, and this is what having one path means on the
+ * server rather than only in the interface.
+ *
+ * WHAT SURVIVES, AND WHY. The column assets.needs_tech_art is untouched: historical rows
+ * keep their value, and src/routes/integration.js still publishes it to Dev & QA as
+ * `needsTechArt`, which is part of a contract this change has no business breaking.
+ * Nothing writes it any more, nothing routes on it, and nothing upgraded a historical
+ * `true` into a hand-off — see tests/send-to-tech-art.test.js, which asserts that
+ * explicitly, because silently creating hand-offs on upgrade is the expensive version of
+ * this change.
  */
-router.patch('/:id/tech-art', requirePermission('integration.flag_tech_art'), async (req, res) => {
-  const { rows } = await db.query(
-    'SELECT id, project_id, `code`, needs_tech_art FROM assets WHERE id = $1', [req.params.id]
-  );
-  const asset = rows[0];
-  if (!asset) return res.status(404).json({ error: 'Asset not found' });
-  if (await projectClosedResponse(res, asset.project_id)) return undefined;
-
-  const wanted = req.body && req.body.needsTechArt;
-  if (typeof wanted !== 'boolean') {
-    return res.status(400).json({ error: 'needsTechArt must be true or false.', field: 'needsTechArt' });
-  }
-  const was = Boolean(Number(asset.needs_tech_art));
-  if (was === wanted) return res.json({ asset: { id: asset.id, needsTechArt: was }, changed: false });
-
-  await db.query('UPDATE assets SET needs_tech_art = $1 WHERE id = $2', [wanted ? 1 : 0, asset.id]);
-  // Recorded by the activityLogger on /api, like every other change here.
-  res.json({ asset: { id: asset.id, needsTechArt: wanted }, changed: true });
-});
 
 /* GET /api/assets/:id/game-feedback — what the build says about this asset, and what
  * this viewer may do about it.

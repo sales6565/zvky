@@ -2927,18 +2927,21 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
   </div>
 </div>
 
-<!-- Send to Dev & QA. A partial drop or a Tech Art hand-off: which assets, what it
-     claims to fix, and a note for whoever picks it up at the other end. -->
+<!-- Sending work out of the studio: which assets, where to, what it claims to fix, and a
+     note for whoever picks it up at the other end.
+     
+     THE "What this is" DROPDOWN IS GONE FROM HERE. It had two options, Partial drop and
+     Tech Art hand-off, and it was the only way to reach Tech Art — a destination hidden one
+     click inside a modal titled Send to Dev & QA, which is not a choice anybody makes on
+     purpose. The destination is now the button that opened this, named in sd_destination
+     below so that whoever is looking at the form can still see where it is going. -->
 <div class="modal-wrap" id="sendToDevWrap">
   <div class="modal" style="width:560px;">
     <h2 id="sd_title">Send to Dev &amp; QA</h2>
     <div id="sd_intro" style="font-size:12.5px;color:var(--ink-muted);margin-bottom:10px;"></div>
     <div id="sd_form">
-      <label>What this is</label>
-      <select id="sd_kind">
-        <option value="partial_drop">Partial drop — art or animation, finished or not</option>
-        <option value="tech_art">Tech Art hand-off</option>
-      </select>
+      <label>Going to</label>
+      <div id="sd_destination" style="font-size:13px;font-weight:600;padding:4px 0 8px;"></div>
       <div class="row2">
         <div><label>Build <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
           <input id="sd_build" placeholder="build-1041"></div>
@@ -5135,6 +5138,25 @@ function mayBulkAssign(){ return can('asset.bulk_assign'); }
  * decides; this only decides what is offered. */
 function sendableToDev(){ return true; }
 function mayBulkSendToDev(){ return can('integration.send_to_dev'); }
+/* The same eligibility, a different key. What makes an asset sendable is a property of the
+   asset and is identical for both destinations — a partial drop and a Tech Art pass are
+   both "this, as it is now, to somebody outside the studio". Who may do it is not
+   identical, which is why there are two keys and one predicate. */
+function mayBulkSendToTechArt(){ return can('integration.send_to_tech_art'); }
+
+/* WHERE A HAND-OFF CAN GO. Mirrored from src/handoff-destination.js, which explains why
+   `destination` is derived from the stored `kind` rather than kept beside it, and why these
+   values are deliberately nothing like `art` / `animation`. The server decides; this is
+   what the two buttons and the modal title say while it does.
+   
+   MIRROR: tests/handoff-destination.test.js compares this list against the module's own,
+   field for field, and fails if they drift. */
+const HANDOFF_DESTINATIONS = {
+  development: { label:'Development', action:'Send to Dev',      sent:'Sent to Development',
+    describe:'Into the build, for Dev & QA to integrate and test.' },
+  tech_art:    { label:'Tech Art',    action:'Send to Tech Art', sent:'Sent to Tech Art',
+    describe:'To Tech Art, for a rigging, shader or pipeline pass before the build.' },
+};
 
 /* --- the Outsource tab's own bulk action ------------------------------------
  *
@@ -5268,7 +5290,14 @@ function bulkActions(){
   const out = [];
   if(mayBulkDeliver()) out.push({ key:'deliver', label:'Mark as Delivered', applies: deliverable });
   if(mayBulkAssign()) out.push({ key:'assign', label:'Assign & Schedule', applies: bulkAssignable });
+  /* TWO DESTINATIONS, TWO BUTTONS, SIDE BY SIDE AND THE SAME SIZE.
+     
+     They were one button and a dropdown. The dropdown's second option was the only route
+     to Tech Art in the whole application, which made an explicit studio decision look like
+     a detail of the send form. Each is gated on its own key, so a studio can offer one
+     without the other, and neither is nested inside the other's menu. */
   if(mayBulkSendToDev()) out.push({ key:'sendToDev', label:'Send to Dev', applies: sendableToDev });
+  if(mayBulkSendToTechArt()) out.push({ key:'sendToTechArt', label:'Send to Tech Art', applies: sendableToDev });
   return out;
 }
 // Is this asset worth offering a box on at all?
@@ -10454,7 +10483,8 @@ function renderList(){
   const openers = {
     deliver: openBulkDeliver,
     assign: openBulkAssign,
-    sendToDev: openSendToDev,
+    sendToDev: (chosen)=>openSendToDev(chosen, 'development'),
+    sendToTechArt: (chosen)=>openSendToDev(chosen, 'tech_art'),
   };
   el.querySelectorAll('[data-bulk]').forEach(btn=>{
     const act = actions.find(x=>x.key===btn.dataset.bulk);
@@ -10584,19 +10614,43 @@ function closeBulkAssign(){ bulkAssignWrap.classList.remove('show'); }
  */
 const sendToDevWrap = document.getElementById('sendToDevWrap');
 let sendToDevPending = [];
+/* WHICH BUTTON OPENED THIS. Held here rather than read off a control in the form, because
+   there is no longer a control to read: the destination is the decision the button made,
+   and the form shows it instead of offering it. */
+let sendToDevDestination = 'development';
 
-function openSendToDev(chosen){
+/* The asset's discipline, in words, for the list in this modal. Through
+   assetDiscipline() and CATEGORY_DISCIPLINE like every other caller on this page — the one
+   rule, not a second reading of `type`, which is the whole reason that function exists. */
+function disciplineLabelFor(a){
+  const id = assetDiscipline(a, CATEGORY_DISCIPLINE);
+  return (ASSET_DISCIPLINES.find(d=>d.id===id)||{}).label || 'Art';
+}
+
+function openSendToDev(chosen, destination){
   sendToDevPending = chosen;
+  sendToDevDestination = HANDOFF_DESTINATIONS[destination] ? destination : 'development';
+  const dest = HANDOFF_DESTINATIONS[sendToDevDestination];
   const projects = [...new Set(chosen.map(a=>a.project_id))];
   document.getElementById('sd_title').textContent =
-    `Send ${chosen.length} asset${chosen.length===1?'':'s'} to Dev & QA`;
+    `${dest.action}: ${chosen.length} asset${chosen.length===1?'':'s'}`;
+  document.getElementById('sd_destination').textContent = `${dest.label} — ${dest.describe}`;
   document.getElementById('sd_intro').textContent = projects.length > 1
     ? 'Those assets are on different projects. A drop goes into one build of one game, so '
       + 'send one project at a time.'
-    : 'Half-finished work is the normal case for a partial drop. Nothing about this changes '
-      + 'the assets or their stage — it records what was sent and tells Dev & QA.';
+    : 'Half-finished work is the normal case. Nothing about this changes the assets or '
+      + 'their stage — it records what was sent, to whom, and tells Dev & QA.';
+  /* THE DISCIPLINE OF EACH ASSET, SHOWN WHEREVER IT IS GOING, because the two are
+     different questions and this is the screen where somebody could most easily conflate
+     them. An animation sent to Development is still an animation, and the line says so
+     while they are choosing to send it.
+     
+     The "needs Tech Art" chip is the LEGACY FLAG, kept read-only: no edit control sets it
+     any more, and on an asset that carries one from before this release it is worth seeing
+     here — this is the screen where somebody would act on it. */
   document.getElementById('sd_list').innerHTML = chosen.map(a=>
     `<label><span class="mono" style="min-width:74px;">${a.code}</span><span>${escapeHTML(a.name)}</span>`
+    + `<span class="chip">${escapeHTML(disciplineLabelFor(a))}</span>`
     + `${a.needs_tech_art ? '<span class="chip">needs Tech Art</span>' : ''}</label>`).join('');
   document.getElementById('sd_err').textContent = '';
   document.getElementById('sd_results').innerHTML = '';
@@ -10606,7 +10660,7 @@ function openSendToDev(chosen){
   const confirm = document.getElementById('sd_confirm');
   confirm.style.display = projects.length > 1 ? 'none' : '';
   confirm.disabled = false;
-  confirm.textContent = 'Send';
+  confirm.textContent = dest.action;
   /* `show`, NOT `open`. This read `classList.add('open')` and there is no
      `.modal-wrap.open` rule anywhere in this stylesheet — only `.modal-wrap.show`
      — so the Send to Dev & QA modal never appeared at all, in any browser. Found
@@ -10622,22 +10676,37 @@ if(sendToDevWrap){
     btn.disabled = true; btn.textContent = 'Sending…';
     document.getElementById('sd_err').textContent = '';
     try{
-      const r = await api('/assets/bulk/send-to-dev', { method:'POST', body:{
+      /* THE ROUTE IS THE DESTINATION, and the body says it too. Each route carries its
+         own permission, so a studio that has granted one and not the other gets the right
+         refusal rather than a generic one; `destination` in the body is what the event
+         will publish and is sent explicitly so that the request is readable on its own in
+         a log or a network tab. */
+      const path = sendToDevDestination === 'tech_art'
+        ? '/assets/bulk/send-to-tech-art'
+        : '/assets/bulk/send-to-dev';
+      const r = await api(path, { method:'POST', body:{
         assetIds: sendToDevPending.map(a=>a.id),
-        kind: document.getElementById('sd_kind').value,
+        destination: sendToDevDestination,
         build: document.getElementById('sd_build').value,
         cpStage: document.getElementById('sd_cp').value,
         bugRefs: document.getElementById('sd_bugs').value,
         note: document.getElementById('sd_note').value,
       } });
       document.getElementById('sd_form').style.display = 'none';
-      document.getElementById('sd_results').innerHTML = bulkResultsHTML(r.results);
+      /* WHICH BUTTON WAS USED, said on the way out as well as on the way in. The results
+         panel is the last thing the sender sees, and "Sent to Tech Art" there is what
+         stops the question "did that go to the right place?". */
+      const dest = HANDOFF_DESTINATIONS[sendToDevDestination];
+      document.getElementById('sd_results').innerHTML =
+        `<div style="font-weight:600;margin-bottom:6px;">${escapeHTML(dest.sent)}</div>`
+        + bulkResultsHTML(r.results);
       btn.style.display = 'none';
       document.getElementById('sd_cancel').textContent = 'Done';
       await loadAssets();
     }catch(err){
       document.getElementById('sd_err').textContent = err.message;
-      btn.disabled = false; btn.textContent = 'Send';
+      btn.disabled = false;
+      btn.textContent = (HANDOFF_DESTINATIONS[sendToDevDestination]||{}).action || 'Send';
     }
   };
 }
@@ -13093,27 +13162,24 @@ async function openDrawer(id){
 
     <div class="field-lbl">Priority</div>
     <select id="d_priority" ${editable?'':'disabled'}>${priorityOptions(a.priority)}</select>
-    ${can('integration.flag_tech_art') ? `
-    <!-- Needs Tech Art.
+    <!-- THE "Needs a Tech Art pass" TICK BOX WAS HERE, AND IS GONE ON PURPOSE.
          
-         A FLAG AND A FILTER, NOT A SEND, and the note under it says so: ticking this marks
-         the asset and tells nobody. Nothing reaches Dev & QA until somebody uses Send to Dev
-         on the Assets List, which they may well do after filtering on this.
+         It set assets.needs_tech_art through a route of its own, and its own note admitted
+         what that bought: "ticking this marks the asset and tells nobody. Nothing reaches
+         Dev & QA until somebody uses Send to Dev on the Assets List, which they may well do
+         after filtering on this." Routing work to another team on the chance that somebody
+         later filters for it is not routing. Send to Tech Art, on the Assets List beside
+         Send to Dev, is the same intention as an act with a recipient and a time.
          
-         Its own permission and its own route, so it saves on its own rather than with the
-         rest of the form: integration.flag_tech_art reaches artists, who cannot edit an
-         asset otherwise, and folding it into the form's Save would have meant either
-         widening that or denying the flag to the people most likely to know it is needed.
-         Which is why it is NOT gated on "editable". -->
+         NO EDIT CONTROL REPLACES IT, here or anywhere else — not disabled, not hidden
+         behind a key, not moved to another tab. The legacy value is still shown, read-only,
+         on an asset that carries one from before this release: it is worth seeing, and the
+         place to act on it is the send modal, which shows it too. -->
+    ${a.needs_tech_art ? `
     <div class="field-lbl">Tech Art</div>
-    <label style="display:flex;gap:8px;align-items:center;font-size:13px;padding:4px 0;">
-      <input type="checkbox" id="d_techArt" ${a.needs_tech_art ? 'checked' : ''}>
-      <span>Needs a Tech Art pass</span>
-      <span class="muted" id="d_techArtState" style="font-size:12px;"></span>
-    </label>
-    <div style="font-size:11px;color:var(--ink-faint);margin-bottom:5px;">
-      Marks the asset so it can be found and sent. Nothing goes to Dev &amp; QA until somebody
-      uses Send to Dev on the Assets List.
+    <div style="font-size:12px;color:var(--ink-muted);padding:2px 0 6px;">
+      Flagged as needing a Tech Art pass before this was recorded as a send.
+      Use <strong>Send to Tech Art</strong> on the Assets List to hand it over.
     </div>` : ''}
     <div class="field-lbl">Description</div><textarea id="d_desc" rows="3" ${editable?'':'disabled'}>${escapeHTML(a.description||'')}</textarea>
     ${can('asset.lead_notes') ? `
@@ -13442,26 +13508,10 @@ async function openDrawer(id){
     });
   });
 
-  /* The Tech Art flag, wired OUTSIDE the `editable` block on purpose — it is its own
-     permission and its own route, and an artist who may flag an asset usually may not edit
-     it. Saves on the change rather than on the form's Save, because there is nothing else
-     on the form it belongs with. */
-  const techArtBox = document.getElementById('d_techArt');
-  if(techArtBox) techArtBox.onchange = async e=>{
-    const wanted = e.target.checked;
-    const state = document.getElementById('d_techArtState');
-    if(state) state.textContent = 'saving…';
-    try{
-      await api(`/assets/${id}/tech-art`, { method:'PATCH', body:{ needsTechArt: wanted } });
-      a.needs_tech_art = wanted ? 1 : 0;
-      if(state) state.textContent = wanted ? 'flagged' : '';
-    }catch(err){
-      // Put the box back, or the screen would claim something the server refused.
-      e.target.checked = !wanted;
-      if(state) state.textContent = '';
-      showToast(err.message);
-    }
-  };
+  /* NO TECH ART HANDLER ANY MORE. The tick box above was the only caller of
+     PATCH /api/assets/:id/tech-art, and both are gone together: the control, and the route
+     behind it. Nothing on this drawer writes assets.needs_tech_art, which is what "removed
+     from the normal asset-edit workflow" means on this screen. */
 
   if(editable){
     document.getElementById('d_priority').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{priority:e.target.value}}); a.priority=e.target.value; render(); }catch(err){ showToast(err.message); } };
@@ -14247,6 +14297,20 @@ const HISTORY_ACTIONS = {
   unassign:           { label: 'Unassigned',        color: 'var(--not)' },
   /* A bug from the build. Amber, the Game Feedback status colour, so a line in the
      history and the stage on the board read as the same thing. */
+  /* LEAVING THE STUDIO. One action for both destinations, because what happened is the
+     same act — this asset, as it is now, was handed to somebody outside the studio — and
+     WHERE it went is in the note the server wrote: "Sent to Development" or "Sent to Tech
+     Art", followed by what kind of parcel it was and anything it claims to fix.
+     
+     Named "Sent out" rather than "Sent to Dev & QA" for exactly that reason: half of these
+     rows are now Tech Art, and a label that named one destination would contradict the
+     note under it on every other line. It was showing as the bare id `sent_to_dev` before
+     this, which is how it came to be noticed.
+     
+     The colour is the one client_sent uses, because both lines mean the same thing about
+     the asset: it left the studio. --series-3, reached for first, is not a token this
+     stylesheet defines -- it would have rendered the label colourless. */
+  sent_to_dev:            { label: 'Sent out',            color: 'var(--client)' },
   game_feedback_raised:   { label: 'Game bug raised',     color: 'var(--series-6)' },
   game_feedback_note:     { label: 'Game bug noted',      color: 'var(--series-6)' },
   game_feedback_pass:     { label: 'Passed to artist',    color: 'var(--series-6)' },

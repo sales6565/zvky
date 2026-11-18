@@ -1925,13 +1925,35 @@ const GROUPS = [
            partial drop to Dev & QA is the same kind of act as sending to the client: a
            judgement that this is fit to go, not a step in making it. */
         impliedBy: anyOf(has('reviewStage'), has('createProject')),
-        describe: 'Put assets into a partial drop or a Tech Art hand-off, and send it.',
-        /* DECLARED PENDING, which is a statement rather than an omission: the screen this
-           gates does not exist yet, and a permission nothing reads is a switch that lies.
-           The guard in tests/role-permissions.test.js fails for any key that is neither
-           read nor declared, which is what keeps this honest — the flag comes off in the
-           same change that adds the screen. */
-        pending: true,
+        /* NO LONGER "or a Tech Art hand-off". It used to cover both destinations, because
+           there was one route and a dropdown inside it; Tech Art now has a key of its own
+           below, and this one describes what it still permits. */
+        describe: 'Put assets into a partial drop and send it to Dev & QA for the build.',
+        /* THE PENDING FLAG IS GONE, and it was stale rather than wrong to begin with: the
+           note said "the screen this gates does not exist yet", and by now
+           POST /api/assets/bulk/send-to-dev reads this key and the Assets List offers the
+           action. A key that is read should not be declared as one that is not. */
+      },
+      {
+        key: 'integration.send_to_tech_art',
+        label: 'Send Work to Tech Art',
+        /* THE SAME PREDICATE AS ITS SIBLING, and that is the decision rather than
+           laziness.
+         *
+         * Before this release, one key — integration.send_to_dev — permitted both
+         * destinations: the Send to Dev & QA modal carried a "What this is" dropdown whose
+         * second option was a Tech Art hand-off. So every designation that holds that key
+         * can already send work to Tech Art today. A narrower default here would not be
+         * caution; it would take away an act those designations can perform right now, in
+         * a release whose whole purpose is to make that act easier to reach.
+         *
+         * It is a SEPARATE KEY so that a studio can change that. Dropping work into the
+         * build and booking Tech Art's time are asks of different teams with different
+         * capacity, and a Super Admin who wants a lead to do the first without the second
+         * can now say so in Settings — which is exactly what they could not do when one
+         * key covered both. */
+        impliedBy: anyOf(has('reviewStage'), has('createProject')),
+        describe: 'Send assets to Tech Art for a rigging, shader or pipeline pass.',
       },
       {
         key: 'integration.flag_tech_art',
@@ -1939,12 +1961,20 @@ const GROUPS = [
         // Wider: an artist knows when their own work needs a Tech Art pass, and saying so
         // is not a decision about anybody else's work.
         impliedBy: anyOf(has('assignable'), has('reviewStage')),
-        describe: 'Mark an asset as needing a Tech Art pass before it goes into the build.',
-        /* DECLARED PENDING, which is a statement rather than an omission: the screen this
-           gates does not exist yet, and a permission nothing reads is a switch that lies.
-           The guard in tests/role-permissions.test.js fails for any key that is neither
-           read nor declared, which is what keeps this honest — the flag comes off in the
-           same change that adds the screen. */
+        describe: 'Legacy: marked an asset as needing a Tech Art pass. Replaced by Send to Tech Art.',
+        /* STILL PENDING, AND NOW FOR THE OPPOSITE REASON TO THE ORIGINAL ONE.
+         *
+         * It was declared pending because the screen it gated did not exist yet. The
+         * screen came — a tick box in the asset drawer, writing assets.needs_tech_art
+         * through PATCH /api/assets/:id/tech-art — and has now been taken away again,
+         * because Tech Art routing is an explicit send rather than a flag somebody sets
+         * and hopes another person filters on.
+         *
+         * So the key reads nothing once more, and says so. It is kept rather than deleted
+         * for two reasons: assets.needs_tech_art still exists and is still published to
+         * Dev & QA as `needsTechArt`, so the concept has not vanished from the contract;
+         * and removing a key rewrites every role group that mentions it. Retiring it is a
+         * decision about the column, which is a separate change from this one. */
         pending: true,
       },
       {

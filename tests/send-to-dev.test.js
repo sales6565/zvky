@@ -1,4 +1,10 @@
-/* Send to Dev, and the Needs Tech Art flag.
+/* Send to Dev — and what became of the Needs Tech Art flag.
+ *
+ * THE FLAG IS GONE AND THIS FILE STILL TESTS IT, inverted. Every assertion about ticking
+ * it has become an assertion that it cannot be ticked, with the original reasoning kept
+ * underneath: the reasons the flag was tested the way it was are the reasons the removal
+ * has to be tested at all. Prompt 72 replaced it with Send to Tech Art, an explicit action
+ * with a recipient and a time, and tests/send-to-tech-art.test.js covers that side.
  *
  * WHAT THE SEND HAS TO LEAVE BEHIND is four things in one transaction, and three of them
  * have a reader who would otherwise be blind:
@@ -111,27 +117,27 @@ test('Send to Dev, and the Tech Art flag', { skip: cfg ? false : SKIP_REASON }, 
     assert.deepStrictEqual(await outboxRows(), [], 'and nothing was queued');
   });
 
-  await t.test('the Tech Art flag is refused without integration.flag_tech_art', async () => {
-    /* Refused for a designation that holds NEITHER integration permission. Granting it is
-       what makes it work, which the next test shows — so this fails for the permission
-       rather than for anything else about the person. */
-    const asset = await newAsset('Also Gated');
-    const stripped = await as('root', '/permissions/roles/game_artist');
-    const without = stripped.body.role.permissions
-      .filter((p) => p.enabled && p.key !== 'integration.flag_tech_art').map((p) => p.key);
-    await as('root', '/permissions/roles/game_artist', { method: 'PUT', body: { permissions: without } });
-
-    const r = await as('artist', `/assets/${asset}/tech-art`, {
-      method: 'PATCH', body: { needsTechArt: true },
-    });
-    assert.strictEqual(r.status, 403, JSON.stringify(r.body));
+  await t.test('the Tech Art flag route is gone, for everybody who held the key', async () => {
+    /* THIS USED TO ASSERT A 403 and now asserts that there is nothing to be refused from.
+     *
+     * The original said: "Refused for a designation that holds NEITHER integration
+     * permission. Granting it is what makes it work, which the next test shows — so this
+     * fails for the permission rather than for anything else about the person."
+     *
+     * That shape is why the inversion is worth writing: a removal tested only against a
+     * person without the key proves nothing, because they would have been refused anyway.
+     * So this asks with the key held — the artist keeps integration.flag_tech_art, and
+     * root holds everything — and the answer is 404 for both. Not 403, which would mean
+     * the route is still there and guarded; not 200, which would mean it still writes. */
+    const asset = await newAsset('No Longer Flaggable');
+    for (const who of ['artist', 'lead', 'root']) {
+      const r = await as(who, `/assets/${asset}/tech-art`, {
+        method: 'PATCH', body: { needsTechArt: true },
+      });
+      assert.strictEqual(r.status, 404, `${who}: ${JSON.stringify(r.body)}`);
+    }
     const row = await sql(cfg, 'SELECT needs_tech_art AS f FROM assets WHERE id = ?', [asset]);
-    assert.strictEqual(Number(row[0].f), 0, 'and the flag is not set');
-
-    // Put it back for the tests below.
-    await as('root', '/permissions/roles/game_artist', {
-      method: 'PUT', body: { permissions: [...without, 'integration.flag_tech_art'] },
-    });
+    assert.strictEqual(Number(row[0].f), 0, 'and nothing wrote the column');
   });
 
   // --- Send to Dev ---------------------------------------------------------
@@ -283,82 +289,91 @@ test('Send to Dev, and the Tech Art flag', { skip: cfg ? false : SKIP_REASON }, 
     await sql(cfg, 'UPDATE projects SET closed_at = NULL WHERE id = ?', [ids.otherProject]);
   });
 
-  // --- the Tech Art flag ---------------------------------------------------
+  // --- the Tech Art flag, after its removal --------------------------------
 
-  await t.test('THE FLAG IS A FLAG: ticking it sends nothing', async () => {
-    /* The reading this rules out — ticking it hands the asset to Dev & QA — is the one that
-       would be expensive to discover in production, so it is asserted rather than assumed.
-       Nothing is queued, no hand-off exists, and the asset does not move. */
+  await t.test('THE FLAG WAS A FLAG, and now there is no way to set one', async () => {
+    /* THE ORIGINAL REASONING, KEPT WORD FOR WORD, because it is what the removal had to
+       preserve: "The reading this rules out — ticking it hands the asset to Dev & QA — is
+       the one that would be expensive to discover in production, so it is asserted rather
+       than assumed. Nothing is queued, no hand-off exists, and the asset does not move."
+
+       The expensive reading is now the opposite one: that UPGRADING the software hands
+       every historically flagged asset to Tech Art. So the flag is written STRAIGHT INTO
+       THE COLUMN here, the way a row from before this release carries it, and the same
+       four things are asserted — no hand-off, nothing queued, no event, and the asset has
+       not moved. */
     const asset = await newAsset('Rig Me', { status: 'in_progress' });
+    await sql(cfg, 'UPDATE assets SET needs_tech_art = 1 WHERE id = ?', [asset]);
     const handoffsBefore = (await handoffs()).length;
     const outboxBefore = (await outboxRows()).length;
 
+    // There is no route to ask any more.
     const r = await as('artist', `/assets/${asset}/tech-art`, {
       method: 'PATCH', body: { needsTechArt: true },
     });
-    assert.strictEqual(r.status, 200, JSON.stringify(r.body));
-    assert.strictEqual(r.body.asset.needsTechArt, true);
-    assert.strictEqual(r.body.changed, true);
+    assert.strictEqual(r.status, 404, JSON.stringify(r.body));
 
     const row = await sql(cfg, 'SELECT needs_tech_art AS f, `status` AS s FROM assets WHERE id = ?', [asset]);
-    assert.strictEqual(Number(row[0].f), 1, 'the asset is marked');
-    assert.strictEqual(row[0].s, 'in_progress', 'and has not moved');
+    assert.strictEqual(Number(row[0].f), 1, 'the historical value is left exactly as it was');
+    assert.strictEqual(row[0].s, 'in_progress', 'and the asset has not moved');
     assert.strictEqual((await handoffs()).length, handoffsBefore, 'NO hand-off was created');
     assert.strictEqual((await outboxRows()).length, outboxBefore, 'and NOTHING was queued for Dev & QA');
     assert.deepStrictEqual((await eventsOf(asset)).map((e) => e.action), [],
-      'it is not a pipeline event either — it is a property of the asset');
+      'and it is not a pipeline event either');
   });
 
-  await t.test('and it can be taken off again, idempotently', async () => {
-    const asset = await newAsset('Flip Me');
-    await as('artist', `/assets/${asset}/tech-art`, { method: 'PATCH', body: { needsTechArt: true } });
+  await t.test('a historical value stays readable, in the list and in the contract', async () => {
+    /* WHAT REPLACES "it can be taken off again, idempotently". There is nothing to take
+       off any more, so what matters is that the data somebody already has is not lost or
+       hidden: the column is still selected onto the asset list, and src/routes/integration.js
+       still publishes it to Dev & QA as `needsTechArt`. Dropping either would be a silent
+       contract change made by a UI decision. */
+    const asset = await newAsset('From Before');
+    await sql(cfg, 'UPDATE assets SET needs_tech_art = 1 WHERE id = ?', [asset]);
 
-    const again = await as('artist', `/assets/${asset}/tech-art`, {
-      method: 'PATCH', body: { needsTechArt: true },
+    const listed = await as('root', `/assets/project/${ids.project}`);
+    const seen = listed.body.assets.find((a) => a.id === asset);
+    assert.ok(seen, 'the list carries it');
+    assert.strictEqual(Number(seen.needs_tech_art), 1, 'with its historical flag intact');
+  });
+
+  await t.test('editing an asset neither needs nor touches the flag', async () => {
+    /* WHAT REPLACES "the flag needs a boolean, not a truthy anything". The old route
+       validated the field because the old route wrote it. The question now is the brief's:
+       does an ordinary edit require it, or quietly change it? An edit is sent with
+       `needsTechArt` in the body — the shape a client written against the old API would
+       send — and the ordinary field saves while the flag is ignored rather than written or
+       refused. */
+    const asset = await newAsset('Edit Me');
+    await sql(cfg, 'UPDATE assets SET needs_tech_art = 1 WHERE id = ?', [asset]);
+
+    /* As root, who can edit anything: what is under test is the FIELD, and a 403 about
+       who may edit this asset would answer a different question. */
+    const r = await as('root', `/assets/${asset}`, {
+      method: 'PATCH', body: { priority: 'high', needsTechArt: false },
     });
-    assert.strictEqual(again.status, 200);
-    assert.strictEqual(again.body.changed, false, 'setting it twice is not a change');
-
-    const off = await as('artist', `/assets/${asset}/tech-art`, {
-      method: 'PATCH', body: { needsTechArt: false },
-    });
-    assert.strictEqual(off.body.asset.needsTechArt, false);
-    assert.strictEqual(off.body.changed, true);
-    const row = await sql(cfg, 'SELECT needs_tech_art AS f FROM assets WHERE id = ?', [asset]);
-    assert.strictEqual(Number(row[0].f), 0);
+    assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+    const row = await sql(cfg,
+      'SELECT needs_tech_art AS f, priority AS p FROM assets WHERE id = ?', [asset]);
+    assert.strictEqual(row[0].p, 'high', 'the edit saved');
+    assert.strictEqual(Number(row[0].f), 1, 'and the legacy flag was neither cleared nor set');
   });
 
-  await t.test('the flag needs a boolean, not a truthy anything', async () => {
-    const asset = await newAsset('Strict');
-    for (const bad of ['yes', 1, null]) {
-      const r = await as('artist', `/assets/${asset}/tech-art`, {
-        method: 'PATCH', body: { needsTechArt: bad },
-      });
-      assert.strictEqual(r.status, 400, `${JSON.stringify(bad)}: ${JSON.stringify(r.body)}`);
-      assert.strictEqual(r.body.field, 'needsTechArt');
-    }
-  });
-
-  await t.test('a flagged asset can then be found and sent, which is the whole workflow',
+  await t.test('a historically flagged asset is sent by choosing the button, not by the flag',
     async () => {
-      // Flag, then send — the two halves, in the order somebody would actually use them.
+      /* THE WHOLE WORKFLOW, AS IT IS NOW. The original flagged an asset through the API and
+         then sent it, "the two halves, in the order somebody would actually use them". The
+         first half is no longer a thing anybody does: the asset carries a flag from before
+         the upgrade, and a person decides where it goes. */
       const asset = await newAsset('End To End');
-      await as('artist', `/assets/${asset}/tech-art`, { method: 'PATCH', body: { needsTechArt: true } });
+      await sql(cfg, 'UPDATE assets SET needs_tech_art = 1 WHERE id = ?', [asset]);
 
-      /* Read with studio-wide scope, because what is under test is that the flag TRAVELS on
-         the list — not project scoping, which would otherwise decide the answer here and
-         make the assertion about something else. */
-      const listed = await as('root', `/assets/project/${ids.project}`);
-      assert.strictEqual(listed.status, 200, JSON.stringify(listed.body));
-      const seen = listed.body.assets.find((a) => a.id === asset);
-      assert.ok(seen, 'the list carries it');
-      assert.ok(Number(seen.needs_tech_art) === 1, 'with the flag, so a filter can find it');
-
-      const sent = await as('lead', '/assets/bulk/send-to-dev', {
-        method: 'POST', body: { assetIds: [asset], kind: 'tech_art' },
+      const sent = await as('lead', '/assets/bulk/send-to-tech-art', {
+        method: 'POST', body: { assetIds: [asset] },
       });
       assert.strictEqual(sent.status, 201, JSON.stringify(sent.body));
       assert.strictEqual(sent.body.results[0].outcome, 'sent');
+      assert.strictEqual(sent.body.destination, 'tech_art');
     });
 
   await t.test('both actions are in the activity log, through the middleware', async () => {
@@ -372,7 +387,11 @@ test('Send to Dev, and the Tech Art flag', { skip: cfg ? false : SKIP_REASON }, 
     const summaries = rows.map((r) => `${r.action} ${r.summary || ''}`).join(' | ');
     assert.ok(/send-to-dev|send_to_dev/i.test(summaries),
       `the drop is in the log: ${summaries.slice(0, 400)}`);
-    assert.ok(/tech-art|tech_art/i.test(summaries),
-      `and so is the flag: ${summaries.slice(0, 400)}`);
+    /* AND SO IS THE OTHER DESTINATION. This used to look for the flag route; the flag is
+       gone and the thing worth finding in the log is the send that replaced it. Both
+       destinations are separate routes, so both appear under their own path — which is
+       what makes the log answer "where did this go?" as well as "who sent it?". */
+    assert.ok(/send-to-tech-art|send_to_tech_art/i.test(summaries),
+      `and so is the Tech Art send: ${summaries.slice(0, 400)}`);
   });
 });
