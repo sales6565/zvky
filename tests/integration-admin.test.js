@@ -32,20 +32,40 @@ const OUT_SECRET = 'outbound-secret-for-the-test-suite';
 const sha256 = (v) => crypto.createHash('sha256').update(v).digest('hex');
 
 test('the permissions this screen needs', () => {
-  for (const key of ['integration.send_to_dev', 'integration.flag_tech_art',
-    'integration.view_ingame', 'settings.integrations']) {
+  for (const key of ['integration.send_to_dev', 'integration.send_to_tech_art',
+    'integration.flag_tech_art', 'integration.view_ingame', 'settings.integrations']) {
     assert.ok(catalog.KEYS.includes(key), `${key} is in the catalogue`);
   }
 
-  /* Three are declared pending — nothing reads them until their screens exist, which is a
-     statement rather than an omission, and the guard in role-permissions.test.js fails for
-     a key that is neither read nor declared. settings.integrations is NOT pending: this
-     release's routes read it. */
-  for (const key of ['integration.send_to_dev', 'integration.flag_tech_art', 'integration.view_ingame']) {
+  /* WHICH OF THESE ARE STILL PENDING, AND THE ANSWER MOVED.
+   *
+   * `pending` means "nothing reads this yet" — a statement rather than an omission, which
+   * is what lets the guard in role-permissions.test.js fail any key that is neither read
+   * nor declared. Three integration keys were declared that way when the group was added,
+   * on the grounds that "the screens they gate do not exist".
+   *
+   * TWO OF THEM NOW HAVE SCREENS AND ROUTES. Prompt 72 put Send to Dev and Send to Tech
+   * Art on the Assets List as two buttons, each asking its own key, and each route guards
+   * itself with requirePermission — so neither is pending any more, and declaring them so
+   * would be the lie the flag exists to prevent, in the other direction.
+   *
+   * The remaining two are genuinely unread: integration.view_ingame has no screen of its
+   * own yet, and integration.flag_tech_art gated the "Needs a Tech Art pass" tick box,
+   * which Prompt 72 removed — so it is pending again, having briefly not been. */
+  for (const key of ['integration.send_to_dev', 'integration.send_to_tech_art']) {
+    assert.ok(!catalog.BY_KEY.get(key).pending, `${key} is read, so not declared pending`);
+  }
+  for (const key of ['integration.flag_tech_art', 'integration.view_ingame']) {
     assert.strictEqual(catalog.BY_KEY.get(key).pending, true, `${key} is declared pending`);
   }
   assert.ok(!catalog.BY_KEY.get('settings.integrations').pending,
     'settings.integrations is read by this release');
+
+  /* AND THE TWO SENDS ARE BOTH GRANTABLE, which is the point of there being two: a studio
+     can hand out one without the other. */
+  for (const key of ['integration.send_to_dev', 'integration.send_to_tech_art']) {
+    assert.ok(catalog.grantableKeys().includes(key), `${key} can be granted`);
+  }
 
   // And it cannot be handed to anybody else — issuing a key reaches data no designation
   // limits, so it is the second not-grantable permission in the catalogue.

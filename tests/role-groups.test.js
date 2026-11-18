@@ -257,6 +257,32 @@ const WIDER_THAN_SUPER_ADMIN = ['leave.request', 'leave.view_team', 'timesheet.t
   'timesheet.project_meeting',
   'assets.rename', 'history.view'];
 
+/* PROMPT 72'S SPLIT KEY: a fourth category, and it needs one for the same reason the
+ * third did.
+ *
+ * integration.send_to_tech_art is not SINCE_SNAPSHOT, because it is deliberately not
+ * Super-Admin-only. It is not WIDER_THAN_SUPER_ADMIN either: every member of that list is
+ * asserted to be about its holder's own time or a label on work they can already edit,
+ * and sending work out of the studio is neither. And it is not a view key — it changes
+ * something.
+ *
+ * WHAT IT IS: a key CARVED OUT OF ONE THAT ALREADY PERMITTED THE ACT. Before this
+ * release, integration.send_to_dev covered both destinations — the Send to Dev & QA modal
+ * carried a dropdown whose second option was a Tech Art hand-off, and the key's own
+ * description said "a partial drop or a Tech Art hand-off". Every designation holding it
+ * could already send work to Tech Art.
+ *
+ * So its holders are EXACTLY that key's holders: nobody gains an ability, nobody loses
+ * one, and the split exists so that a Super Admin can now narrow one without the other —
+ * which is precisely what they could not do while it was one key. The equality is
+ * asserted below rather than described, because "nobody loses what they had" is the kind
+ * of claim that is easy to write and easy to get wrong.
+ *
+ * A key split this way in future belongs here with its parent named. A key that merely
+ * happens to be wide does not. */
+const SPLIT_FROM = { 'integration.send_to_tech_art': 'integration.send_to_dev' };
+const SPLIT_KEYS = Object.keys(SPLIT_FROM);
+
 /* PROMPT 61'S VIEW KEYS: a third category, and they need one.
  *
  * They are not SINCE_SNAPSHOT, because they are deliberately NOT
@@ -378,6 +404,17 @@ test('the keys that are wider than Super Admin are wider on purpose', () => {
     assert.ok(!['leave.approve', 'leave.manage_all', 'timesheet.team', 'timesheet.all']
       .includes(key), `${key} reaches only its holder's own time`);
   }
+
+  /* AND A SPLIT KEY REACHES EXACTLY ITS PARENT'S HOLDERS. Not a subset, which would take
+     away an act a designation can perform today; not a superset, which would hand it to
+     somebody who could not do it yesterday. An equality, because the promise is that the
+     split changed who may do nothing at all — only who may be stopped. */
+  for (const [key, parent] of Object.entries(SPLIT_FROM)) {
+    assert.deepStrictEqual(holdersOf(key), holdersOf(parent),
+      `${key} must reach exactly the designations that hold ${parent}`);
+    assert.ok(holdersOf(key).length > 1,
+      `${key} is not Super-Admin-only, which is why it is in this category`);
+  }
 });
 
 test('the view keys reach exactly as far as the writes they shadow', () => {
@@ -434,12 +471,13 @@ test('the view keys reach exactly as far as the writes they shadow', () => {
 test('every key added since the snapshot is Super Admin only', () => {
   const added = catalog.KEYS.filter((k) => !SNAPSHOT.roles.super_admin.includes(k))
     .filter((k) => !WIDER_THAN_SUPER_ADMIN.includes(k))
-    .filter((k) => !VIEW_KEYS.includes(k));
+    .filter((k) => !VIEW_KEYS.includes(k))
+    .filter((k) => !SPLIT_KEYS.includes(k));
   assert.deepStrictEqual(added.sort(), [...SINCE_SNAPSHOT].sort(),
     'a catalogue key was added without being accounted for here');
   assert.strictEqual(catalog.KEYS.length,
     SNAPSHOT.catalogueSize + SINCE_SNAPSHOT.length + WIDER_THAN_SUPER_ADMIN.length
-    + VIEW_KEYS.length);
+    + VIEW_KEYS.length + SPLIT_KEYS.length);
 
   for (const key of SINCE_SNAPSHOT) {
     const entry = catalog.BY_KEY.get(key);
@@ -474,7 +512,9 @@ test('THE SNAPSHOT: with no groups defined, every role is unchanged',
          them in would read as "super_admin changed" for a change argued and
          asserted twenty lines above. The test above is what holds their width;
          this one is about everything that did NOT change. */
-      const added = [...SINCE_SNAPSHOT, ...WIDER_THAN_SUPER_ADMIN, ...VIEW_KEYS];
+      /* AND THE SPLIT KEYS, for the same reason as the other two lists: they reach
+         designations the snapshot predates, by an equality argued and asserted above. */
+      const added = [...SINCE_SNAPSHOT, ...WIDER_THAN_SUPER_ADMIN, ...VIEW_KEYS, ...SPLIT_KEYS];
       const now = [...held].filter((k) => !added.includes(k)).sort();
       assert.deepStrictEqual(now, expected,
         `${roleKey} changed: +${now.filter((k) => !expected.includes(k))} `
