@@ -42,9 +42,9 @@ test('scripts/user-sees.js', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   /* The script in a real process, with the connection settings in the environment variables
      src/db reads — the same shape tests/chat.test.js uses for the sweep. Its own process,
      because the script opens src/db, and this one must not. */
-  const run = (...args) => {
+  const runWith = (pre, args) => {
     try {
-      return execFileSync(process.execPath, [path.join('scripts', 'user-sees.js'), ...args], {
+      return execFileSync(process.execPath, [...pre, path.join('scripts', 'user-sees.js'), ...args], {
         cwd: ROOT,
         env: { ...process.env,
           DB_HOST: cfg.host, DB_PORT: String(cfg.port), DB_NAME: cfg.database,
@@ -60,6 +60,9 @@ test('scripts/user-sees.js', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       throw e;
     }
   };
+  const run = (...args) => runWith([], args);
+  /* The same script, in a process that cannot write — see tests/read-only-guard.js. */
+  const runReadOnly = (...args) => runWith(['--require', './tests/read-only-guard.js'], args);
 
   const newAsset = async (project, code, status, assignee = null) => {
     const assetId = crypto.randomUUID();
@@ -145,6 +148,52 @@ test('scripts/user-sees.js', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
     assert.deepStrictEqual(await snapshot(), before,
       'the diagnostic changed the database');
+  });
+
+  await t.test('it still answers in a process that cannot write at all', async () => {
+    /* THE CHECKSUM TEST ABOVE IS NOT ENOUGH ON ITS OWN, and a mutation proved it: an
+       `UPDATE users SET name = name` changes no bytes, so comparing bytes cannot see it.
+       A no-op write is still a write — locks, binary log, triggers, and a flat refusal from
+       a replica or a read-only user.
+       
+       So the script is run again through a guard that replaces src/db's query() and exits
+       3 on any statement that is not a read. If it answers, it read only. The two tests are
+       complementary: this one proves no write was ISSUED, the one above proves nothing
+       changed even by a path this guard cannot see. */
+    const out = runReadOnly('Stand In');
+    assert.match(out, /sees EVERY asset/, 'it answered');
+    assert.match(out, /named on project_acting_team_leads/, 'and with the reason');
+
+    /* THE GUARD ITSELF IS PROVED TO BITE, because a guard that silently never fires is
+       worse than no guard: it reads as coverage. A write is attempted through the same
+       entry point the script uses, in the same kind of process, and the exit code says 3. */
+    const proof = (() => {
+      try {
+        execFileSync(process.execPath, ['--require', './tests/read-only-guard.js', '-e',
+          "require('./src/db').query('UPDATE users SET name = name WHERE id = $1', ['x'])"], {
+          cwd: ROOT,
+          env: { ...process.env,
+            DB_HOST: cfg.host, DB_PORT: String(cfg.port), DB_NAME: cfg.database,
+            DB_USER: cfg.user, DB_PASSWORD: cfg.password, DATABASE_URL: '' },
+        });
+        return { status: 0, stderr: '' };
+      } catch (err) {
+        return { status: err.status, stderr: (err.stderr || '').toString() };
+      }
+    })();
+    assert.strictEqual(proof.status, 3, 'the guard stops a write');
+    assert.match(proof.stderr, /may only read/);
+
+    // And a read goes through it untouched.
+    const reads = execFileSync(process.execPath, ['--require', './tests/read-only-guard.js', '-e',
+      "const db=require('./src/db');db.query('SELECT 1 AS n').then(r=>{"
+      + "process.stdout.write(String(r.rows[0].n));return db.end();})"], {
+      cwd: ROOT,
+      env: { ...process.env,
+        DB_HOST: cfg.host, DB_PORT: String(cfg.port), DB_NAME: cfg.database,
+        DB_USER: cfg.user, DB_PASSWORD: cfg.password, DATABASE_URL: '' },
+    }).toString();
+    assert.strictEqual(reads, '1', 'and lets a read through');
   });
 
   /* ------------------------------------------------- it agrees with the server */

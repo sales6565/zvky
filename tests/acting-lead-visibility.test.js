@@ -444,57 +444,111 @@ test('what an Acting Team Lead sees', { skip: cfg ? false : SKIP_REASON }, async
   /* ------------------------------------------- the third site, asked directly */
 
   await t.test('the board behind the hold rule says the project is on their dashboard', async () => {
-    /* THE THIRD PLACE THE ROLE TIER LIVED was permissions.assetOnDashboard(), and it is the
-       hardest of the three to observe: the asset list hands its own answer in — it has the
-       project list batched already — so the function itself is only consulted by the hold
-       routes. Which means a mutation that leaves this one site on the old check changes no
-       response in the suites above, and only the "decided in one place" guard catches it.
-       A guard over the source is worth having; it is not worth having INSTEAD of asking the
-       application.
+    /* THE THIRD PLACE THE ROLE TIER LIVED was permissions.assetOnDashboard(), and it is by
+       far the hardest of the three to observe. The asset list hands its own answer in — it
+       has the project list batched already — so the function itself is reached only through
+       the hold routes, and holdFactsFor() asks it only when the subject holds BOTH hold
+       keys, is not the assignee, and the asset has one. Everything else is answered without
+       a query, by design: tests/hold-lead-scope.test.js points that process at a database
+       that does not exist to prove the cheap refusals never touch it.
+       
+       Which means a mutation that leaves this one site on the old role tier changes no
+       response anywhere, and only the "decided in one place" source guard catches it. A
+       guard over the source is worth having. It is not worth having INSTEAD of asking the
+       application, so this subtest arranges the one state in which the question reaches the
+       function at all:
+       
+         - the studio grants the two hold keys TO THE ARTIST DESIGNATION, in Settings >
+           Role Permissions, through the same route that screen uses. That is a decision
+           only a Super Admin can make and it is nothing this task hands out: the test
+           above asserts a stand-in's permission set is byte-for-byte another artist's,
+           and this runs after it. It also lands on EVERY artist here, which is what makes
+           the comparison below clean — the acting lead and the assignee-only artist now
+           differ in one thing, their membership of the project.
+         - the asset asked about has an assignee, and it is somebody else.
+       
+       GET /:id/hold-explain?userId= is the route: it exists so that an answer that looks
+       wrong can be argued with, it reports facts.onDashboard verbatim, and with the
+       permission that manages permissions it can be asked about another person. No new
+       route, no new permission, and the one function under test. */
+    const had = {};
+    for (const designation of ['game_artist', 'game_animator']) {
+      const role = await as('owner', `/permissions/roles/${designation}`);
+      assert.strictEqual(role.status, 200, JSON.stringify(role.body));
+      had[designation] = role.body.role.permissions.filter((p) => p.enabled).map((p) => p.key);
+      const granted = await as('owner', `/permissions/roles/${designation}`, { method: 'PUT',
+        body: { permissions: [...new Set([...had[designation], 'asset.hold', 'asset.hold_any'])] } });
+      assert.strictEqual(granted.status, 200, JSON.stringify(granted.body));
+    }
 
-       GET /:id/hold-explain?userId= is the way to ask. It exists so that an answer that
-       looks wrong can be argued with, it reports `facts.onDashboard` verbatim, and with the
-       permission that manages permissions it can be asked about somebody else — so the
-       owner can ask it about each of these people in turn, on an asset that is none of
-       theirs. No new route, no new permission, and the one function under test. */
-    const ask = async (userId) => {
-      const r = await as('owner', `/assets/${assetsA.pending_tl_review}/hold-explain?userId=${userId}`);
-      assert.strictEqual(r.status, 200, JSON.stringify(r.body));
-      return r.body.facts;
-    };
+    try {
+      /* A-MINE is assigned to the assignee-only artist, so it is somebody else's work for
+         every subject asked about below except that artist — who is excluded for that
+         reason: "it is mine" is answered before the visibility question and would tell us
+         nothing about this function. */
+      const ask = async (userId) => {
+        const r = await as('owner', `/assets/${assetsA.mine}/hold-explain?userId=${userId}`);
+        assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+        return r.body.facts;
+      };
 
-    assert.strictEqual((await ask(id.tl)).onDashboard, true,
-      'a Team Lead of the project: on their dashboard, as before');
-    assert.strictEqual((await ask(id.acting)).onDashboard, true,
-      'the Acting TL: on their dashboard — this is the fix, in the third place');
-    assert.strictEqual((await ask(id.acting2)).onDashboard, true,
-      'and for a stand-in of a different designation');
-    assert.strictEqual((await ask(id.coord)).onDashboard, true,
-      'a coordinator named on it: unchanged');
-    assert.strictEqual((await ask(id.assignee)).onDashboard, false,
-      'an artist with work on the project but named on nothing: still false, '
-      + 'which is the half that must not have moved');
-    assert.strictEqual((await ask(id.outsider)).onDashboard, false,
-      'and somebody on nothing at all');
+      const lead = await ask(id.tl);
+      assert.strictEqual(lead.onDashboard, true,
+        'a Team Lead of the project: on their dashboard, as before');
+
+      const standIn = await ask(id.acting);
+      assert.strictEqual(standIn.holdsPermission && standIn.holdsAny, true,
+        'the grant reached them, so the question really was asked');
+      assert.strictEqual(standIn.onDashboard, true,
+        'the Acting TL: on their dashboard — this is the fix, in the third place');
+
+      assert.strictEqual((await ask(id.acting2)).onDashboard, true,
+        'and for a stand-in of a different designation');
+
+      const stranger = await ask(id.outsider);
+      assert.strictEqual(stranger.holdsPermission && stranger.holdsAny, true,
+        'an artist holding exactly the same keys');
+      assert.strictEqual(stranger.onDashboard, false,
+        'but named on nothing: still false, which is the half that must not have moved');
+    } finally {
+      // The designations go back to what they were, whatever happened above.
+      for (const [designation, keys] of Object.entries(had)) {
+        await as('owner', `/permissions/roles/${designation}`, { method: 'PUT',
+          body: { permissions: keys } });
+      }
+    }
+
+    const back = await as('acting', '/auth/me');
+    assert.ok(!back.body.user.permissions.includes('asset.hold_any'),
+      'and the grant is gone again');
   });
 
   /* ------------------------------------------- every team section, one at a time */
 
   await t.test('every table in PROJECT_TEAM_TABLES grants lead-level asset visibility', async () => {
-    /* THE BRIEF'S REQUIREMENT, AS BEHAVIOUR RATHER THAN AS AN IDENTITY. The source-level
-       test below pins that seesWholeProject() reaches the tables only through
-       isProjectLead(), which reads the constant. This one proves what that buys: an
-       ordinary artist named on each section in turn — one section at a time, nothing else
-       changed about them — opens the whole project.
-
-       Driven off permissions.PROJECT_TEAM_TABLES, so a fifth team section added to that
-       constant is tested here the moment it is added, and a section that does NOT grant
-       lead-level visibility fails with its own name in the message.
-
-       The rows are written straight to the tables rather than through the project edit
-       form: the form takes four named id lists and this has to iterate the constant, which
-       is the whole point — a table the form has not learned to write yet must still be
-       honoured by the visibility rule. */
+    /* THE BRIEF'S REQUIREMENT AS BEHAVIOUR, and writing it honestly turned up something
+       worth knowing about the shape of the rule.
+       
+       THE SUBJECT IS A CONTRIBUTOR WITH ONE ASSIGNMENT IN THE PROJECT, and that is not
+       incidental. seesWholeProject() asks canAccessProject() FIRST, so being named on a
+       team list only means something for somebody the project is reachable for at all —
+       and visibleProjects() reaches a contributor's projects through their assignments,
+       their project_members row, ownership, and the ACTING list. It does not read the
+       other three tables for a contributor's scope.
+       
+       That asymmetry is deliberate rather than an oversight, and it is unreachable through
+       the product: the Team Leads, Coordinators and Supervision pickers on the project form
+       are filtered to designations that run a team, so a contributor can only ever be
+       written to the acting list — which is exactly why that one is also a reachability
+       source. Pinning THAT is a different test from this one and belongs with
+       visibleProjects(), so this fixes reachability with an assignment and varies the one
+       thing it is about: which team list names them.
+       
+       Driven off permissions.PROJECT_TEAM_TABLES, so a fifth team section added to the
+       constant is tested the moment it is added, and a section that does not grant
+       lead-level visibility fails with its own name in the message. The rows are written
+       straight to the tables, because the point is the CONSTANT and not the four named id
+       lists the edit form happens to take today. */
     const artist = await as('owner', '/users', { method: 'POST', body: {
       name: 'one at a time', email: 'oneatatime@av.test', role: 'game_artist',
       password: PASSWORD } });
@@ -502,6 +556,7 @@ test('what an Acting Team Lead sees', { skip: cfg ? false : SKIP_REASON }, async
     const who = artist.body.user.id;
     token.one = (await api(server.base, '/auth/login',
       { method: 'POST', body: { email: 'oneatatime@av.test', password: PASSWORD } })).body.token;
+    await newAsset(id.A, 'A-ONEWORK', 'in_progress', who);
 
     const clear = async () => {
       for (const table of permissions.PROJECT_TEAM_TABLES) {
@@ -510,8 +565,12 @@ test('what an Acting Team Lead sees', { skip: cfg ? false : SKIP_REASON }, async
     };
 
     await clear();
-    assert.strictEqual((await as('one', `/assets/project/${id.A}`)).status, 403,
-      'named on nothing, they cannot reach the project at all');
+    const base = await as('one', `/assets/project/${id.A}`);
+    assert.strictEqual(base.status, 200, 'the assignment makes the project reachable');
+    assert.deepStrictEqual((base.body.assets || []).map((a) => a.code), ['A-ONEWORK'],
+      'named on nothing, an artist sees their own work and nothing else');
+    assert.strictEqual((await as('one', `/assets/${assetsA.delivered}/history`)).status, 403,
+      'and cannot read a colleague\'s');
 
     const expected = countOnA();
     for (const table of permissions.PROJECT_TEAM_TABLES) {
@@ -521,18 +580,19 @@ test('what an Acting Team Lead sees', { skip: cfg ? false : SKIP_REASON }, async
       const board = await as('one', `/assets/project/${id.A}`);
       assert.strictEqual(board.status, 200, `${table}: ${JSON.stringify(board.body)}`);
       assert.strictEqual((board.body.assets || []).length, expected,
-        `${table} must grant lead-level visibility — it gave ${(board.body.assets || []).length}`
-        + ` of ${expected} assets`);
+        `${table} must grant lead-level visibility — it gave `
+        + `${(board.body.assets || []).length} of ${expected} assets`);
 
-      /* And a single asset reads, which is canViewAsset rather than the list query — the
-         two came apart once and that is the whole reason this task exists. */
+      /* And a single asset reads, which is canViewAsset() rather than the list query. The
+         two came apart once, and that is the whole reason this task exists. */
       assert.strictEqual((await as('one', `/assets/${assetsA.delivered}/history`)).status, 200,
         `${table}: the detail read must agree with the board`);
     }
 
     await clear();
-    assert.strictEqual((await as('one', `/assets/project/${id.A}`)).status, 403,
-      'and taking the last row away closes it again');
+    const after = await as('one', `/assets/project/${id.A}`);
+    assert.deepStrictEqual((after.body.assets || []).map((a) => a.code), ['A-ONEWORK'],
+      'and taking the last row away leaves them with their own work again');
   });
 
   /* --------------------------------------------- the one surface that is NOT equal */
