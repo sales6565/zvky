@@ -43,10 +43,18 @@ const SKIP = !cfg ? SKIP_REASON
     : (!EXECUTABLE ? `No Chromium found. Looked in: ${CANDIDATES.join(', ')}.` : false));
 
 const PASSWORD = 'Fresh-Test-1!';
-/* The page's own numbers: NOTIF_POLL_MS is 30s and PERMISSION_REFRESH_MS is 20s, so one
-   change is seen within a poll and a bit. Mirrored here with that much slack and no more —
-   a minute's grace would hide a cycle that had quietly become five. */
-const WITHIN = 75000;
+/* HOW LONG THIS IS WILLING TO WAIT. The page's own numbers are NOTIF_POLL_MS 30s and
+   PERMISSION_REFRESH_MS 20s, so the change is normally on screen about half a minute after
+   the save — three runs in a row measured 30s.
+   
+   The bound is three of those intervals rather than one, and that is deliberate after this
+   suite failed once on a loaded machine while a git worktree was being checked out beside
+   it. A browser test that waits exactly one tick is a test that fails for reasons that have
+   nothing to do with the code, and a flaky guard gets deleted by the next person. What the
+   claim needs is that the board fills WITHOUT ANYBODY TOUCHING THE PAGE and on the interval
+   that was already running; the assertion below reports the time it actually took, and the
+   request count in the subtest after it is what pins the cadence. */
+const WITHIN = 110000;
 const STATUSES = ['not_started', 'assigned', 'in_progress', 'pending_tl_review',
   'tl_changes_requested', 'delivered'];
 
@@ -144,8 +152,20 @@ test('a stand-in named on an open page sees the board fill', { skip: SKIP }, asy
 
     /* NOT A CLICK, NOT A RELOAD, NOT A NAVIGATION between the save above and the assertion
        below: the only thing that happens in this window is the application's own interval. */
-    await page.waitForFunction('(state.assets || []).length === 7', null, { timeout: WITHIN });
+    try {
+      await page.waitForFunction('(state.assets || []).length === 7', null, { timeout: WITHIN });
+    } catch (err) {
+      /* A timeout here is the bug coming back, so the report says enough to tell that
+         apart from a slow machine: what the page thinks its memberships are, how many
+         assets it is holding, and how many times it has read /auth/me. */
+      const diag = await page.evaluate(() => ({
+        teams: state.projectTeams, assets: (state.assets || []).length,
+        project: state.currentProjectId, view: state.view }));
+      const me = requests.filter((r) => /\/api\/auth\/me/.test(r.url)).length;
+      throw new Error(`${err.message}\n  page: ${JSON.stringify(diag)}\n  /auth/me reads: ${me}`);
+    }
     const took = Date.now() - markAt;
+    console.log(`    the board filled by itself after ${Math.round(took / 1000)}s`);
 
     const codes = await page.evaluate(() => (state.assets || []).map((a) => a.code).sort());
     assert.strictEqual(codes.length, STATUSES.length + 1);
@@ -155,6 +175,11 @@ test('a stand-in named on an open page sees the board fill', { skip: SKIP }, asy
     assert.strictEqual(await page.evaluate(() => window.__sameDocument), 'yes',
       'the page reloaded — which is the thing this test exists to rule out');
     assert.ok(took < WITHIN, `it took ${Math.round(took / 1000)}s`);
+
+    /* AND IT WAS A POLL THAT DID IT. At least one read of /auth/me landed inside the
+       window, which is the mechanism this fix uses — not a page event, not a click. */
+    const during = requests.filter((r) => r.at >= markAt && /\/api\/auth\/me/.test(r.url));
+    assert.ok(during.length >= 1, 'the membership read that carried this was the poll');
 
     /* AND THE ROWS ARE REALLY DRAWN, not only in state: a membership change that updates the
        data and leaves the screen alone is the same complaint in a different place. Read from
