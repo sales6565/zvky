@@ -67,6 +67,12 @@ function fixture() {
   const reapply = cut('function reapplyPermissionGates({ redrawProjects = true } = {}){',
     '\n}\n', 'reapplyPermissionGates') + '\n}';
   const applyChange = cut('async function applyPermissionChange(){', '\n}\n', 'applyPermissionChange') + '\n}';
+  /* THE MEMBERSHIP FLAG, lifted rather than stubbed. Prompt 72 gave
+     applyPermissionChange() a second thing to act on — being put on or taken off a
+     project's team — and it reads it through consumeProjectTeamsMoved(). A fixture that
+     hand-wrote that function would be a second copy of the page's own rule about when one
+     change is acted on once, which is the mistake the rest of this file exists to avoid. */
+  const teamsFlag = cut('let projectTeamsMoved = false;', '\n}\n', 'the membership flag') + '\n}';
 
   return `<!doctype html><html><head><meta charset="utf-8"></head><body>
     <button id="editProjectBtn" style="display:none;">&#9998;</button>
@@ -114,6 +120,13 @@ function fixture() {
     }
     function renderProjects(){ RENDERS += 1; }
     function openDrawer(){ }
+    ${teamsFlag}
+    /* The two calls applyPermissionChange() makes when the MEMBERSHIPS moved — which is
+       not what this fixture drives, so they are counted rather than performed. The real
+       thing, on a real poll, is tests/acting-lead-freshness-browser.test.js. */
+    let TEAM_REFETCHES = 0;
+    async function refreshProjects(){ TEAM_REFETCHES += 1; }
+    async function render(){ RENDERS += 1; }
     ${reapply}
     ${applyChange}
     </script></body></html>`;
