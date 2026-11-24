@@ -226,6 +226,65 @@ async function isReport(user, userId) {
 }
 
 // Can this user view a specific asset (read access)?
+/* DOES THIS PERSON SEE EVERY ASSET OF THIS PROJECT — the one project-level answer.
+ *
+ * ===========================================================================
+ * THE BUG THIS EXISTS TO END, which was the same bug in three places.
+ *
+ * An owner names an ordinary artist as Acting Team Lead of a project. The project appears
+ * in their picker — visibleProjects() has had a union for the acting list since Prompt 50 —
+ * and then the board is EMPTY. Not refused: two hundred with nothing in it, and every
+ * read of an individual asset (history, tasks, worklog, game feedback, submissions) a
+ * flat 403. A stand-in lead with no work of their own in the project saw nothing at all,
+ * on a project they had just been put in charge of.
+ *
+ * Three places decided it, and all three asked the same wrong question — the ROLE TIER:
+ *
+ *   canViewAsset()                 if (isContributor(def)) return false
+ *   assetOnDashboard()             if (isContributor(def)) return asset.assignee_id === ...
+ *   GET /assets/project/:id        if (isContributor(def)) sql += ' AND a.assignee_id = ?'
+ *
+ * An artist or animator is `assignable` and not `leadsTeam`, so each of those narrowed
+ * them to their own assignments however many project team tables named them. None of them
+ * asked the question the feature turns on: is this person a lead OF THIS PROJECT?
+ *
+ * ===========================================================================
+ * SO THE QUESTION IS ASKED ONCE, HERE, AND FROM THE SHARED LIST.
+ *
+ * isProjectLead() is PROJECT_TEAM_TABLES — team leads, ACTING team leads, coordinators and
+ * supervision — so every team section a project form offers is covered by one list, and a
+ * section added to that list is covered by this the moment it is added. No second
+ * hard-coded table list, and no role tier: that is the whole point.
+ *
+ * ===========================================================================
+ * WHAT IT DOES NOT CHANGE, read one designation at a time with the project reachable:
+ *
+ *   scope 'all'                         true, as before
+ *   leadsTeam                           true, as before (canAccessProject was the answer)
+ *   contributor, not a project lead     false, as before
+ *   coordinator/admin tier, not a lead  true, as before (canAccessProject was the answer)
+ *   contributor who IS a project lead   TRUE — and this is the fix, the only new answer
+ *
+ * ARCHIVED PROJECTS ARE STILL OUT, for everyone including a named lead, because the first
+ * thing this asks is canAccessProject() and visibleProjects() excludes them. The rule for
+ * an archived project is today's rule, untouched.
+ *
+ * IT WIDENS NOTHING BEYOND THE PROJECT NAMED. An Acting TL of A is a lead of A and of
+ * nothing else; on project B they are whatever their designation makes them. */
+async function seesWholeProject(user, projectId) {
+  const def = roleDef(user && user.role);
+  if (!def || !projectId) return false;
+  if (def.projectScope === 'all') return true;
+  /* The project has to be reachable at all first — which is where archived projects and
+     projects outside the designation's scope drop out, exactly as they did before. */
+  if (!(await canAccessProject(user, projectId))) return false;
+  if (def.leadsTeam) return true;
+  /* THE FIX, and the only line that answers differently from this morning: a designation
+     that is not a lead by tier, but has been named a lead of THIS project. */
+  if (await isProjectLead(user, projectId)) return true;
+  return !isContributor(def);
+}
+
 async function canViewAsset(user, asset) {
   const def = roleDef(user.role);
   if (!def) return false;
@@ -240,14 +299,15 @@ async function canViewAsset(user, asset) {
    * designation that is both the UNION of the two rules rather than whichever
    * test happens to run first. */
   if (def.assignable && asset.assignee_id === user.id) return true;
-  if (def.leadsTeam) {
-    if (await isReport(user, asset.assignee_id)) return true;
-    return canAccessProject(user, asset.project_id);
-  }
-  /* A contributor: their own work and nothing else, exactly as before. */
-  if (isContributor(def)) return false;
-  // Admin and coordinator: must have access to the parent project.
-  return canAccessProject(user, asset.project_id);
+  /* A LEAD'S REPORTS, which is not a project-level question and stays here: a lead sees
+     work their report is holding wherever it is, including in a project their own scope
+     does not reach. seesWholeProject() cannot answer that and must not try. */
+  if (def.leadsTeam && await isReport(user, asset.assignee_id)) return true;
+  /* AND THE PROJECT-LEVEL ANSWER, from the one function that gives it. This replaces the
+     three branches that used to be here — leadsTeam, the contributor refusal, and the
+     coordinator fall-through — because all three were asking "does this person see the
+     whole of this project?" in three different ways. */
+  return seesWholeProject(user, asset.project_id);
 }
 
 // Does this person hold a catalogue permission — from their role's tier, or
@@ -539,6 +599,25 @@ async function reviewTeamProjects(userId, projectIds) {
   return new Set(rows.map((r) => r.project_id));
 }
 
+/* EVERY PROJECT THIS PERSON IS ON THE TEAM OF, as ids — the whole list, not a test
+ * against ids the caller already has.
+ *
+ * reviewTeamProjects() above answers "which of THESE projects" and needs the candidates;
+ * this answers "which projects at all", which is what /auth/me carries so an open page can
+ * notice its own memberships changing. Same four tables, same constant: a team section
+ * added to PROJECT_TEAM_TABLES is carried by this without being mentioned here.
+ *
+ * Sorted, so the value is comparable as a string on the other side and two reads that
+ * found the same memberships cannot look like a change. */
+async function projectTeamIdsFor(userId) {
+  if (!userId) return [];
+  const sql = PROJECT_TEAM_TABLES
+    .map((t) => `SELECT project_id FROM ${t} WHERE user_id = $1`)
+    .join(' UNION ');
+  const { rows } = await db.query(sql, [userId]).catch(() => ({ rows: [] }));
+  return [...new Set(rows.map((r) => r.project_id).filter(Boolean))].sort();
+}
+
 async function onProjectReviewTeam(user, projectId) {
   if (!user || !projectId) return false;
   return (await reviewTeamProjects(user.id, [projectId])).has(projectId);
@@ -610,12 +689,15 @@ async function assetOnDashboard(user, asset, projects = null) {
     ? projects.some((p) => (p.id || p) === asset.project_id)
     : await canAccessProject(user, asset.project_id);
   if (!reachable) return false;
-  /* The board's one narrowing. A contributor's dashboard is their own work, so
-     "anything on your dashboard" is "anything assigned to you" — which the
-     assignee branch of the rule already covers, and this makes sure the
-     hold_any key cannot widen it by accident. */
-  if (isContributor(def)) return asset.assignee_id === user.id;
-  return true;
+  /* The board's one narrowing, now asked of the shared function rather than of the role
+     tier. A contributor's dashboard is still their own work — seesWholeProject() returns
+     false for them, so this reads exactly as it did — EXCEPT for a contributor who has
+     been named a lead of this project, who now sees the project's board like any other
+     lead of it. That was the bug: the acting lead's board was empty.
+
+     The assignee half stays, because an assignment is visible whatever the project says. */
+  if (await seesWholeProject(user, asset.project_id)) return true;
+  return asset.assignee_id === user.id;
 }
 
 /* The same question for a whole board, batched. One visibleProjects() for the
@@ -1078,6 +1160,8 @@ module.exports = {
   tlGateAuthority,
   onProjectReviewTeam,
   PROJECT_TEAM_TABLES, PROJECT_LEAD_TABLES, ACTING_TABLE,
+  seesWholeProject,
+  projectTeamIdsFor,
   projectLeadIds, isProjectLead, leadTablesFor,
   reviewTeamProjects,
   projectHasReviewTeam,

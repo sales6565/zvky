@@ -8,6 +8,7 @@ const { v4: uuid } = require('uuid');
 const db = require('../db');
 // The previous-working-day rule's answer, which /me hands to the page so the
 // browser never recomputes a date rule the server owns.
+const permissions = require('../permissions');
 const timesheetGate = require('../timesheet-gate');
 const dayStateFor = require('../day-state');
 const theme = require('../theme');
@@ -192,9 +193,41 @@ router.get('/me', authenticate, async (req, res) => {
     console.warn(`[day state] failing quiet for ${req.user && req.user.id}: ${err.message}`);
   }
 
+  /* WHICH PROJECTS THIS PERSON IS ON THE TEAM OF, so an open page notices being added
+   * to one — or taken off it — on the poll it already runs.
+   *
+   * THE REASON THIS FIELD EXISTS. An owner names somebody Acting Team Lead in the project
+   * edit form. That person's open page had no way to find out: their permission set does
+   * not change (being a stand-in on one project grants no permission, which is the whole
+   * design of Prompt 50 and a test pins it), so the twenty-second /auth/me poll compared
+   * two identical permission lists and concluded nothing had happened. The project and its
+   * assets appeared only when they next navigated or reloaded.
+   *
+   * IDS AND NOT THE PROJECTS. This endpoint is polled every twenty seconds by every
+   * signed-in browser; it carries what the page needs to spot a change and nothing more,
+   * the same trade the theme version above makes. Sorted, so two reads of the same
+   * memberships cannot look like a change.
+   *
+   * FROM permissions.projectTeamIdsFor(), which is PROJECT_TEAM_TABLES — so a team section
+   * added to that list is noticed here without this line being touched.
+   *
+   * It is its own field rather than part of `user`, like the gate and the day state above:
+   * it is a fact about what this person is on, not about the account, and `user` is what
+   * tests compare between two artists to prove no permission was granted. */
+  let projectTeams = [];
+  try {
+    projectTeams = await permissions.projectTeamIdsFor(req.user.id);
+  } catch (err) {
+    /* NEVER FAILS THIS ENDPOINT, for the same reason the day state does not: signing in
+       and knowing what you may do must not depend on it. An empty list reads as "no
+       memberships", which is what the page would have assumed before this field existed. */
+    console.warn(`[project teams] failing quiet for ${req.user && req.user.id}: ${err.message}`);
+  }
+
   res.json({
     user: req.user,
     dayState,
+    projectTeams,
     /* THE THEME'S VERSION, so a colour change reaches an open screen without
        anybody reloading. A number and not the colours: this endpoint is polled
        every twenty seconds by every signed-in browser, and sending a hundred hex

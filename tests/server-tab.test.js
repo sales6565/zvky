@@ -364,7 +364,28 @@ test('PRODUCTION SAFETY: the submit route is exactly what it was', () => {
       '  if (assetSchedule.startsInFuture(asset)) {',
       '      error: assetSchedule.notYetMessage(asset),',
       '      startsOn: assetSchedule.asISODate(asset.start_date),',
-      /* PROMPT 72'S LINES ARE NOT LISTED HERE, and that is deliberate: every one of them
+      /* PROMPT 72, the Acting Team Lead's empty board. The asset list route stopped
+       * deciding its own narrowing: the three lines below were a ROLE TIER check
+       * (`isContributor(def)`), and they are now one call to
+       * permissions.seesWholeProject(). The import they needed went with them, which is
+       * why the `require('../roles')` line reads as removed — its replacement, one name
+       * shorter, is on the ADDITIVE list below.
+       *
+       * WHY THIS CANNOT REACH THE ENDPOINT THIS TEST PROTECTS: all three are inside
+       * GET /project/:projectId — drawing a board. None is in POST /:id/submit, none is in
+       * GET /versions/:versionId/download, and neither of those routes narrows anything by
+       * viewer: submit writes a version for the asset named in the URL, and the download
+       * serves the version named in the URL. Neither reads `def`, and neither asks who may
+       * see which rows.
+       *
+       * The replacement is also not looser for anybody who was already seeing less. It
+       * adds one question — "is this person named on this project's team lists" — to a
+       * check that otherwise answers exactly as before; tests/acting-lead-visibility.test.js
+       * holds every other designation to its previous answer, row for row. */
+      "const { assignableRoles, roleDef, isContributor } = require('../roles');",
+      '  const def = roleDef(req.user.role);',
+      '  if (isContributor(def)) {',
+      /* PROMPT 72'S OTHER LINES ARE NOT LISTED HERE, and that is deliberate: every one of them
        * is inside the hand-off block excluded above, so this guard no longer compares
        * them at all. Seventeen entries were written out here first; the block replaced
        * them, because a list of seventeen rewritten lines says less about what changed
@@ -386,6 +407,17 @@ test('PRODUCTION SAFETY: the submit route is exactly what it was', () => {
       [/server-settings|server-submissions|submitUploadEnabled\(\)|serverSubmissions\.claim/,
         'the office file server: inert while the Server tab is off'],
       [/^\s*\}$/, 'a brace closing one of the blocks above'],
+      [/^\s*(seesWholeProject,|if \(!\(await seesWholeProject\(req\.user, projectId\)\)\) \{|sql \+= ' AND a\.assignee_id = \$2';|params\.push\(req\.user\.id\);)$/,
+        'Prompt 72, the Acting Team Lead\'s empty board: the shared visibility decision '
+        + 'imported beside the other names this file takes from src/permissions.js, the one '
+        + 'call to it, and the two lines of own-work narrowing it now guards. All four are '
+        + 'inside GET /project/:projectId. The submit route and the legacy download narrow '
+        + 'nothing by viewer — each acts on the id in its own URL — so none of this is read '
+        + 'by either.'],
+      [/^const \{ assignableRoles, roleDef \} = require\('\.\.\/roles'\);$/,
+        "Prompt 72: the same import with isContributor dropped, because the asset list no "
+        + 'longer decides its own narrowing from the role tier. Nothing in the submit route '
+        + 'or the legacy download reads it.'],
       /* Prompt 55. The assignee picker gains a soft "on vacation" chip, which is
          a different route in this file (/reassign-options) and reads nothing the
          submit route touches. Two lines: the require, and one call that mutates

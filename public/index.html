@@ -3818,6 +3818,19 @@ function perms(){ return (state.currentUser && state.currentUser.permissions) ||
    change that takes effect where somebody can see it. */
 const PERMISSION_REFRESH_MS = 20000;
 let permissionsCheckedAt = 0;
+/* SET BY THE POLL, READ ONCE BY THE THING THAT ACTS ON IT.
+ *
+ * refreshPermissions() answers one boolean — "did the permission set or a feature switch
+ * move" — and the memberships are a different question with a different consequence: the
+ * gates do not change, the DATA does. So it is reported beside that boolean rather than
+ * folded into it, and consumed so one change is acted on once. */
+let projectTeamsMoved = false;
+function consumeProjectTeamsMoved(){
+  const moved = projectTeamsMoved;
+  projectTeamsMoved = false;
+  return moved;
+}
+
 async function refreshPermissions(){
   if(!state.token || !state.currentUser) return false;
   if(Date.now() - permissionsCheckedAt < PERMISSION_REFRESH_MS) return false;
@@ -3825,8 +3838,28 @@ async function refreshPermissions(){
   const before = perms().join(',');
   try{
     const { user, timesheetGate, themeVersion, dayState, serverEnabled,
-      assetRenameEnabled, historyEnabled } = await api('/auth/me');
+      assetRenameEnabled, historyEnabled, projectTeams } = await api('/auth/me');
     state.currentUser = user;
+    /* BEING ADDED TO A PROJECT'S TEAM — OR TAKEN OFF IT — ON THIS SAME POLL.
+     *
+     * THE GAP THIS CLOSES. An owner names somebody Acting Team Lead in the project edit
+     * form. Nothing in this payload used to move: a stand-in holds no new permission by
+     * design, so `before` and `after` matched and the poll concluded nothing had happened.
+     * Their open page kept the project list and the empty board it had, until they
+     * navigated or reloaded — which is the half of this bug a server fix cannot reach.
+     *
+     * The ids are compared as a sorted string. NULL ON THE FIRST READ IS NOT A CHANGE:
+     * the first poll of a session is where the page LEARNS its memberships, and treating
+     * that as a change would refetch the board once for nothing on every sign-in. */
+    if(projectTeams !== undefined){
+      const next = [...projectTeams].sort().join(',');
+      if(state.projectTeams === null || state.projectTeams === undefined){
+        state.projectTeams = next;
+      } else if(state.projectTeams !== next){
+        state.projectTeams = next;
+        projectTeamsMoved = true;
+      }
+    }
     /* !== false AND NOT Boolean(): a server that does not send the field at all
        — an older build, or one whose history_settings migration has not run —
        must leave the tab as it was rather than hiding it, which is the rule
@@ -5580,6 +5613,11 @@ let state = { view:'board', search:'', userSearch:'', filterType:'', listGroup:'
      so the tab is shown rather than hidden while we do not yet know, which is
      the right way round for a switch whose default is on. */
   historyEnabled: undefined,
+  /* THE PROJECTS THIS PERSON IS ON THE TEAM OF, as a sorted joined string, mirrored from
+     /auth/me on the poll. null means "not learned yet" and is deliberately not the same as
+     the empty string, which means "on no project's team": the first poll stores whatever
+     it finds without treating it as a change. See refreshPermissions(). */
+  projectTeams: null,
   /* The Assets List's column filters — one per heading, see
      ASSET_LIST_FILTERS. On top of the header's search and scope filter, and
      still NOT folded into filteredAssets(): that pool feeds the Board too, and
@@ -26173,8 +26211,31 @@ function reapplyPermissionGates({ redrawProjects = true } = {}){
  * Not render(): a full render refetches the board and would fight with whatever
  * the person is in the middle of. */
 async function applyPermissionChange(){
-  if(!(await refreshPermissions())) return;
-  reapplyPermissionGates();
+  const permissionsMoved = await refreshPermissions();
+  /* ASKED AFTER refreshPermissions(), because that call is what sets it. */
+  const teamsMoved = consumeProjectTeamsMoved();
+  if(!permissionsMoved && !teamsMoved) return;
+  if(permissionsMoved) reapplyPermissionGates();
+  if(!teamsMoved) return;
+
+  /* THE PROJECT'S ASSETS, FETCHED AGAIN, because the answer the server gives has changed
+   * for this person and nothing else on this page would ask again.
+   *
+   * refreshProjects() first: a project the person was just added to is not in their
+   * picker yet, and the board reads state.currentProjectId against that list. Then
+   * render(), which refetches the assets of whatever project is open and redraws the view.
+   *
+   * render() IS NORMALLY AVOIDED ON THIS POLL — the note above says it refetches the board
+   * and would fight with whatever the person is doing, which is why a permission change
+   * re-decides the gates instead. The trade is different here for the same reason
+   * reapplyPermissionGates() drops its caches: this runs only on a tick where the
+   * memberships actually moved, which is a thing that happens when somebody is put on or
+   * taken off a project, not every twenty seconds. A board that stays empty after being
+   * handed a project is the bug; one refetch at that moment is the fix.
+   *
+   * NO NEW POLLING LOOP. This is the notification interval that was already running. */
+  await refreshProjects();
+  await render();
 }
 
 function startNotifications(){

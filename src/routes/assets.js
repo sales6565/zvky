@@ -22,6 +22,7 @@ const serverSubmissions = require('../server-submissions');
 const {
   canAccessProject,
   canViewAsset,
+  seesWholeProject,
   canEditAsset,
   canDeleteAsset,
   canCreateAsset,
@@ -47,7 +48,7 @@ const {
   REWORK_STATUSES,
   holds,
 } = require('../permissions');
-const { assignableRoles, roleDef, isContributor } = require('../roles');
+const { assignableRoles, roleDef } = require('../roles');
 const lifecycle = require('../lifecycle');
 const workLog = require('../work-log');
 const emailNotifications = require('../email-notifications');
@@ -491,14 +492,22 @@ router.get('/project/:projectId', async (req, res) => {
    * empty board. The project was in their picker, the request returned 200, and
    * every asset in it answered 200 to a direct read. Only the board was empty,
    * and nothing on screen suggested where the work had gone. */
-  const def = roleDef(req.user.role);
-  /* `&& !def.leadsTeam` is load-bearing. A lead is assignable too now, and
-     without it this narrowed a lead's board to their own assignments — the
-     empty-board bug above, back again by a different route, and the reason
-     this pair of rules is called out as having to agree. */
-  if (isContributor(def)) {
-    // A contributor only ever sees their own work — canViewAsset says the same,
-    // so this is the one narrowing that belongs here.
+  /* THE NARROWING IS NOT DECIDED HERE ANY MORE — it is asked of the one function that
+   * decides it everywhere, permissions.seesWholeProject().
+   *
+   * This used to read `if (isContributor(def))`, a ROLE TIER, and that was the empty-board
+   * bug a second time. The comment above describes the first one, when a lead named as a
+   * project's Team Lead got a blank board because the query filtered on their direct
+   * reports. The same shape came back for Acting Team Leads: an ordinary artist named as
+   * one is a contributor by tier whatever the project's team tables say, so this line
+   * narrowed their board to their own assignments — nothing at all, for a stand-in with no
+   * work of their own in the project.
+   *
+   * Asking the shared function instead means this list and canViewAsset cannot disagree,
+   * which is what the paragraph above says they must not do and what
+   * tests/hold-visibility.test.js holds them to by fetching this board and comparing. */
+  if (!(await seesWholeProject(req.user, projectId))) {
+    // Their own work only — which is what canViewAsset answers for the same person.
     sql += ' AND a.assignee_id = $2';
     params.push(req.user.id);
   }
