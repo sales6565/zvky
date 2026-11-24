@@ -285,6 +285,21 @@ test('what an Acting Team Lead sees', { skip: cfg ? false : SKIP_REASON }, async
 
   /* ----------------------------------------------------------------- the scope */
 
+  await t.test('a designation that is not a contributor still cannot reach a project it is not on', async () => {
+    /* THE REACHABILITY CHECK INSIDE THE SHARED FUNCTION, asked where it is the only thing
+       standing in the way. A coordinator is not a contributor, so the last line of
+       seesWholeProject() answers TRUE for them — and the only reason that is not "every
+       project in the studio" is the canAccessProject() call above it.
+
+       The asset list route refuses project B for them on its own, so the list cannot show
+       this. The detail read can: canViewAsset() asks the shared function with no
+       project check of its own. */
+    const onB = await as('coord', `/assets/${id.onB}/history`);
+    assert.strictEqual(onB.status, 403, `a coordinator is not on B: ${JSON.stringify(onB.body)}`);
+    const onA = await as('coord', `/assets/${assetsA.pending_tl_review}/history`);
+    assert.strictEqual(onA.status, 200, 'while A, which they are named on, reads as before');
+  });
+
   await t.test('an Acting TL of A sees nothing extra of B', async () => {
     const acting = await sweep('acting');
     assert.strictEqual(acting['asset list / board (B)'], '403',
@@ -358,54 +373,50 @@ test('what an Acting Team Lead sees', { skip: cfg ? false : SKIP_REASON }, async
       body: { actingTeamLeadIds: [id.acting, id.acting2] } })).status, 200);
   });
 
-  await t.test('the same person as Team Lead and Acting TL is not counted twice', async () => {
-    /* The two lists are separate tables, so one person can be on both — and the answer a
-       person gets must not double. The claim is checked where it would show: the rows the
-       tables hold, the rows on the board, and the membership list /auth/me carries.
+  await t.test('the same person on two team lists is one person, not two', async () => {
+    /* The two lists are separate tables, so one person can be on both — a Team Lead of a
+       project who is also named on its acting list, which is how a studio records "they are
+       the lead AND standing in while the other lead is away". The answer that person gets
+       must not double.
 
-       The tables are read with sql(cfg, ...) rather than by calling projectLeadIds() here,
-       because that function would run on THIS process's connection, which is pointed at the
-       default database and not at this suite's. */
-    const rowsPerTable = async () => {
-      const out = {};
-      for (const table of permissions.PROJECT_TEAM_TABLES) {
-        out[table] = (await sql(cfg, `SELECT user_id FROM ${table} WHERE project_id = ?`, [id.A]))
-          .map((r) => r.user_id);
-      }
-      return out;
-    };
-    const before = await rowsPerTable();
-    assert.ok(before.project_team_leads.includes(id.tl));
-    assert.ok(before.project_acting_team_leads.includes(id.acting));
+       THE ROW IS WRITTEN DIRECTLY, and that is the point of this subtest rather than a
+       shortcut. Asked through the project edit form, this exact pairing may be refused — a
+       Team Lead standing in for themselves is standing in for nobody — and a version of
+       this test that went through the form passed by never creating the duplicate at all. A
+       real database can hold the pair whatever the form thinks of it: a project saved before
+       the form had an opinion, a hand-run SQL fix, a future form that allows it. So the
+       state is made, and then the answers are read. */
+    await sql(cfg, 'INSERT IGNORE INTO project_acting_team_leads (project_id, user_id) VALUES (?,?)',
+      [id.A, id.tl]);
+    const rows = await sql(cfg,
+      'SELECT user_id FROM project_team_leads WHERE project_id = ? AND user_id = ?'
+      + ' UNION ALL SELECT user_id FROM project_acting_team_leads WHERE project_id = ? AND user_id = ?',
+      [id.A, id.tl, id.A, id.tl]);
+    assert.strictEqual(rows.length, 2, 'the person really is on both lists now');
 
-    /* The owner names the TL on the acting list as well. The route may refuse this — a
-       Team Lead acting for themselves is acting for nobody — and either answer is fine
-       here; what must not happen is a doubled board. */
-    const both = await as('owner', `/projects/${id.A}`, { method: 'PATCH', body: {
-      teamLeadIds: [id.tl], actingTeamLeadIds: [id.acting, id.acting2, id.tl] } });
-    if (both.status === 200) {
-      const after = await rowsPerTable();
-      for (const [table, users] of Object.entries(after)) {
-        assert.strictEqual(new Set(users).size, users.length,
-          `${table} holds a duplicate row for one person`);
-      }
-      const board = await as('tl', `/assets/project/${id.A}`);
-      const seen = (board.body.assets || []).map((a) => a.code);
-      assert.strictEqual(new Set(seen).size, seen.length,
-        `the board repeated an asset: ${seen.join(' ')}`);
-      assert.strictEqual(seen.length, countOnA(), 'and shows each of them once');
+    const board = await as('tl', `/assets/project/${id.A}`);
+    const seen = (board.body.assets || []).map((a) => a.code);
+    assert.strictEqual(new Set(seen).size, seen.length,
+      `the board repeated an asset: ${seen.sort().join(' ')}`);
+    assert.strictEqual(seen.length, countOnA(), 'and shows each of them exactly once');
 
-      const me = await as('tl', '/auth/me');
-      const teams = me.body.projectTeams || [];
-      assert.strictEqual(new Set(teams).size, teams.length,
-        `the membership list repeated a project: ${teams.join(' ')}`);
+    const me = await as('tl', '/auth/me');
+    const teams = me.body.projectTeams || [];
+    assert.strictEqual(new Set(teams).size, teams.length,
+      `the membership list repeated a project: ${teams.join(' ')}`);
+    assert.deepStrictEqual(teams, [...teams].sort(),
+      'and it is still sorted, so two reads of one state cannot look like a change');
 
-      const projects = (await as('tl', '/projects')).body.projects.map((p) => p.id);
-      assert.strictEqual(new Set(projects).size, projects.length,
-        'and the project list did not list A twice');
-    } else {
-      assert.ok(both.status >= 400, 'refused, which is the other acceptable answer');
-    }
+    const projects = (await as('tl', '/projects')).body.projects.map((p) => p.id);
+    assert.strictEqual(new Set(projects).size, projects.length,
+      'nor did the project list name A twice');
+
+    /* Their visibility is unchanged by being on the list twice — still exactly a lead's. */
+    const lead = await as('tl', `/assets/${assetsA.delivered}/history`);
+    assert.strictEqual(lead.status, 200);
+
+    await sql(cfg, 'DELETE FROM project_acting_team_leads WHERE project_id = ? AND user_id = ?',
+      [id.A, id.tl]);
   });
 
   /* ----------------------------------------------- the actions are NOT widened */
@@ -428,6 +439,100 @@ test('what an Acting Team Lead sees', { skip: cfg ? false : SKIP_REASON }, async
     /* Assigning somebody: still refused. */
     const assign = await as('acting', `/assets/${target}/assign`, { method: 'POST', body: { assigneeId: id.assignee } });
     assert.ok(assign.status >= 400, `assigning stays refused: ${assign.status}`);
+  });
+
+  /* ------------------------------------------- the third site, asked directly */
+
+  await t.test('the board behind the hold rule says the project is on their dashboard', async () => {
+    /* THE THIRD PLACE THE ROLE TIER LIVED was permissions.assetOnDashboard(), and it is the
+       hardest of the three to observe: the asset list hands its own answer in — it has the
+       project list batched already — so the function itself is only consulted by the hold
+       routes. Which means a mutation that leaves this one site on the old check changes no
+       response in the suites above, and only the "decided in one place" guard catches it.
+       A guard over the source is worth having; it is not worth having INSTEAD of asking the
+       application.
+
+       GET /:id/hold-explain?userId= is the way to ask. It exists so that an answer that
+       looks wrong can be argued with, it reports `facts.onDashboard` verbatim, and with the
+       permission that manages permissions it can be asked about somebody else — so the
+       owner can ask it about each of these people in turn, on an asset that is none of
+       theirs. No new route, no new permission, and the one function under test. */
+    const ask = async (userId) => {
+      const r = await as('owner', `/assets/${assetsA.pending_tl_review}/hold-explain?userId=${userId}`);
+      assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+      return r.body.facts;
+    };
+
+    assert.strictEqual((await ask(id.tl)).onDashboard, true,
+      'a Team Lead of the project: on their dashboard, as before');
+    assert.strictEqual((await ask(id.acting)).onDashboard, true,
+      'the Acting TL: on their dashboard — this is the fix, in the third place');
+    assert.strictEqual((await ask(id.acting2)).onDashboard, true,
+      'and for a stand-in of a different designation');
+    assert.strictEqual((await ask(id.coord)).onDashboard, true,
+      'a coordinator named on it: unchanged');
+    assert.strictEqual((await ask(id.assignee)).onDashboard, false,
+      'an artist with work on the project but named on nothing: still false, '
+      + 'which is the half that must not have moved');
+    assert.strictEqual((await ask(id.outsider)).onDashboard, false,
+      'and somebody on nothing at all');
+  });
+
+  /* ------------------------------------------- every team section, one at a time */
+
+  await t.test('every table in PROJECT_TEAM_TABLES grants lead-level asset visibility', async () => {
+    /* THE BRIEF'S REQUIREMENT, AS BEHAVIOUR RATHER THAN AS AN IDENTITY. The source-level
+       test below pins that seesWholeProject() reaches the tables only through
+       isProjectLead(), which reads the constant. This one proves what that buys: an
+       ordinary artist named on each section in turn — one section at a time, nothing else
+       changed about them — opens the whole project.
+
+       Driven off permissions.PROJECT_TEAM_TABLES, so a fifth team section added to that
+       constant is tested here the moment it is added, and a section that does NOT grant
+       lead-level visibility fails with its own name in the message.
+
+       The rows are written straight to the tables rather than through the project edit
+       form: the form takes four named id lists and this has to iterate the constant, which
+       is the whole point — a table the form has not learned to write yet must still be
+       honoured by the visibility rule. */
+    const artist = await as('owner', '/users', { method: 'POST', body: {
+      name: 'one at a time', email: 'oneatatime@av.test', role: 'game_artist',
+      password: PASSWORD } });
+    assert.strictEqual(artist.status, 201, JSON.stringify(artist.body));
+    const who = artist.body.user.id;
+    token.one = (await api(server.base, '/auth/login',
+      { method: 'POST', body: { email: 'oneatatime@av.test', password: PASSWORD } })).body.token;
+
+    const clear = async () => {
+      for (const table of permissions.PROJECT_TEAM_TABLES) {
+        await sql(cfg, `DELETE FROM ${table} WHERE project_id = ? AND user_id = ?`, [id.A, who]);
+      }
+    };
+
+    await clear();
+    assert.strictEqual((await as('one', `/assets/project/${id.A}`)).status, 403,
+      'named on nothing, they cannot reach the project at all');
+
+    const expected = countOnA();
+    for (const table of permissions.PROJECT_TEAM_TABLES) {
+      await clear();
+      await sql(cfg, `INSERT INTO ${table} (project_id, user_id) VALUES (?,?)`, [id.A, who]);
+
+      const board = await as('one', `/assets/project/${id.A}`);
+      assert.strictEqual(board.status, 200, `${table}: ${JSON.stringify(board.body)}`);
+      assert.strictEqual((board.body.assets || []).length, expected,
+        `${table} must grant lead-level visibility — it gave ${(board.body.assets || []).length}`
+        + ` of ${expected} assets`);
+
+      /* And a single asset reads, which is canViewAsset rather than the list query — the
+         two came apart once and that is the whole reason this task exists. */
+      assert.strictEqual((await as('one', `/assets/${assetsA.delivered}/history`)).status, 200,
+        `${table}: the detail read must agree with the board`);
+    }
+
+    await clear();
+    assert.strictEqual((await as('one', `/assets/project/${id.A}`)).status, 403,
+      'and taking the last row away closes it again');
   });
 
   /* --------------------------------------------- the one surface that is NOT equal */
