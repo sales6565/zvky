@@ -24919,11 +24919,25 @@ function wireRoleGroup(g){
     }
     const moved = (rolesRes.added.length + rolesRes.removed.length
       + usersRes.added.length + usersRes.removed.length);
-    say('rg_roles_msg', moved
+    const said = moved
       ? `${rolesRes.added.length + rolesRes.removed.length} role change(s), `
         + `${usersRes.added.length} user(s) added, ${usersRes.removed.length} removed `
         + '— in effect on their next request.'
-      : 'No changes.', 'ok');
+      : 'No changes.';
+    /* THE CONFIRMATION GOES TO THE TOAST, not only to the line under the button.
+     *
+     * renderRoleGroups() below replaces this whole section, which erases
+     * #rg_roles_msg and anything written to it — so a message set here and
+     * nowhere else is one the owner never reads. (The roles half of this editor
+     * had the same flaw before this change: it wrote its summary and then
+     * redrew over it. A real-browser test waiting for that text is what found
+     * it.) The toast outlives the redraw, which is why every other save on this
+     * screen already uses it; the line under the button keeps the ERRORS, where
+     * there is no redraw to erase them.
+     *
+     * In-page either way: a toast is a div, not a native dialog. */
+    showToast(said);
+    say('rg_roles_msg', said, 'ok');
     rgDraft = null;      // saved: the server's list is the truth again
     rgUserHits = null;
     rgUserTotal = 0;

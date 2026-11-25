@@ -131,10 +131,24 @@ test('role group members, in Chrome', { skip: SKIP }, async (t) => {
     if (server) await stopServer(server);
   });
 
-  /* The group editor, open, with the card expanded. */
+  /* The group editor, open, with the card expanded.
+   *
+   * THE SETTINGS SECTIONS ARE AN ACCORDION, and finding that out cost this suite
+   * its first run: every section's markup is in the DOM from the moment Settings
+   * renders, but a collapsed one is hidden — so `[data-rg-open]` was present,
+   * matched by a query, and never clickable. Playwright waited thirty seconds for
+   * it to become visible and reported it as a locator that never resolved.
+   *
+   * Expanded through the page's own openSettingsSection(), which is what the
+   * Settings index buttons call, rather than by clicking the heading: the
+   * accordion keys off the heading's text and the state lives in a Set, so a test
+   * that reached in and toggled classes would be a second copy of that. */
   const openEditor = async () => {
     await ownerPage.click('[data-tab="settings"]');
     await ownerPage.waitForSelector('[data-section="role-groups"]', { timeout: 45000 });
+    await ownerPage.evaluate(() => openSettingsSection('Role Groups'));
+    await ownerPage.waitForSelector(`[data-rg-open="${id.group}"]`, { state: 'visible', timeout: 45000 });
+
     const open = await ownerPage.$(`[data-group="${id.group}"] #rg_user_search`);
     if (!open) {
       await ownerPage.click(`[data-rg-open="${id.group}"]`);
@@ -207,11 +221,21 @@ test('role group members, in Chrome', { skip: SKIP }, async (t) => {
   await t.test('saving applies both lists, in the page, with no native dialog', async () => {
     const markAt = Date.now();
     await ownerPage.click('#rg_save_members');
+    /* THE TOAST, not the line under the button: renderRoleGroups() replaces the
+       whole section after a save, which erases that line. Waiting for it is what
+       found that — the summary was being written and then redrawn over, so the
+       owner never read it. */
     await ownerPage.waitForFunction(
-      'document.getElementById("rg_roles_msg") && /user\\(s\\) added/.test(document.getElementById("rg_roles_msg").textContent)',
+      'document.getElementById("toast") && /user\\(s\\) added/.test(document.getElementById("toast").textContent)',
       null, { timeout: 45000 });
-    const said = await ownerPage.$eval('#rg_roles_msg', (e) => e.textContent);
+    const said = await ownerPage.$eval('#toast', (e) => e.textContent);
     assert.match(said, /2 user\(s\) added/, `the page says what happened: ${said}`);
+    /* AND THAT THE ROLES HALF RAN IN THE SAME PRESS. Nought of them moved, which
+       is the right answer — game_animator was already ticked because it is
+       already in the group — and the figure being reported at all is what shows
+       both lists were sent. */
+    assert.match(said, /0 role change\(s\)/,
+      `the roles half ran and found nothing to do: ${said}`);
 
     /* IN-PAGE ONLY — asserted for the whole suite at the end as well, but this is
        the press that would have raised one. */
@@ -265,15 +289,16 @@ test('role group members, in Chrome', { skip: SKIP }, async (t) => {
 
   await t.test('removing one takes the control away again, on its own', async () => {
     await openEditor();
-    const x = await ownerPage.$$('.rg-chip');
-    assert.ok(x.length >= 2, 'both chips are there after the reload of the card');
+    assert.strictEqual((await chips()).length, 2, 'both chips are there after the card redrew');
 
-    /* Remove Ana by her own chip's ×, found by the name rather than by position. */
-    const anaChip = await ownerPage.evaluateHandle(() => [...document.querySelectorAll('.rg-chip')]
-      .find((c) => /Ana Ruiz/.test(c.textContent)));
-    const dropper = await anaChip.asElement().$('.rg-x');
-    await dropper.click();
-    assert.strictEqual((await chips()).length, 1, 'her chip is gone');
+    /* HER OWN CHIP'S REMOVE BUTTON, BY THE ID IT CARRIES. The first version of
+       this walked the chips in page context looking for her name and then
+       reached into the handle it got back for the button; the id on the button
+       is both simpler and immune to how the name happens to be rendered. */
+    await ownerPage.click(`[data-rg-drop="${id.ana}"]`);
+    const left = await chips();
+    assert.deepStrictEqual(left.filter((t) => /Ana Ruiz/.test(t)), [], 'her chip is gone');
+    assert.strictEqual(left.length, 1, "and Ben's is not");
 
     await ownerPage.click('#rg_save_members');
     await ownerPage.waitForFunction(
