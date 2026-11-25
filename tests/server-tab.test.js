@@ -364,6 +364,21 @@ test('PRODUCTION SAFETY: the submit route is exactly what it was', () => {
       '  if (assetSchedule.startsInFuture(asset)) {',
       '      error: assetSchedule.notYetMessage(asset),',
       '      startsOn: assetSchedule.asISODate(asset.start_date),',
+      /* PROMPT 73, individual users in a role group. Hold-explain resolves the
+       * SUBJECT's permissions, and the line below gained the account id so that
+       * it answers for the real person — including any group they were added to
+       * by name — rather than for an average holder of their designation. The
+       * replacement is on the ADDITIVE list.
+       *
+       * WHY THIS CANNOT REACH THE ENDPOINT THIS TEST PROTECTS: the line is
+       * inside GET /:id/hold-explain, a read that exists so a hold decision can
+       * be argued with. It is not in POST /:id/submit, not in
+       * GET /versions/:versionId/download, and neither of those resolves
+       * anybody's permission set — each is gated by its own requirePermission
+       * and acts on the id in its own URL. The change is also not looser: it
+       * adds a third source of GRANTS to a diagnostic's report, and groups can
+       * only ever add. */
+      '      permissions: [...await rolePermissions.effectiveFor(db, users[0].role)],',
       /* PROMPT 72, the Acting Team Lead's empty board. The asset list route stopped
        * deciding its own narrowing: the three lines below were a ROLE TIER check
        * (`isContributor(def)`), and they are now one call to
@@ -407,6 +422,11 @@ test('PRODUCTION SAFETY: the submit route is exactly what it was', () => {
       [/server-settings|server-submissions|submitUploadEnabled\(\)|serverSubmissions\.claim/,
         'the office file server: inert while the Server tab is off'],
       [/^\s*\}$/, 'a brace closing one of the blocks above'],
+      [/^\s*permissions: \[\.\.\.await rolePermissions\.effectiveFor\(db, users\[0\]\.role, users\[0\]\.id\)\],$/,
+        'Prompt 73: the same resolution for hold-explain\'s subject with the account id '
+        + 'added, so it reports what that person holds rather than what their designation '
+        + 'does. Inside GET /:id/hold-explain; the submit route and the legacy download '
+        + 'resolve nobody\'s permissions.'],
       [/^\s*(seesWholeProject,|if \(!\(await seesWholeProject\(req\.user, projectId\)\)\) \{|sql \+= ' AND a\.assignee_id = \$2';|params\.push\(req\.user\.id\);)$/,
         'Prompt 72, the Acting Team Lead\'s empty board: the shared visibility decision '
         + 'imported beside the other names this file takes from src/permissions.js, the one '

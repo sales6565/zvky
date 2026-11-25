@@ -60,7 +60,14 @@ test('the two gates name the same permission, and the page reads the configured 
   }
 
   const auth = fs.readFileSync(path.join(__dirname, '..', 'src', 'middleware', 'auth.js'), 'utf8');
-  assert.match(auth, /rolePermissions\.effectiveFor\(db, user\.role\)/,
+  /* THE ACCOUNT ID IS PART OF THE CALL SINCE PROMPT 73, and the pin follows rather
+     than being loosened. effectiveFor's third argument adds the groups this PERSON
+     was added to by name to the two sources it already unioned — so the claim this
+     line exists to make is unchanged and slightly stronger: the server resolves the
+     CONFIGURED SET (the role's rows, its groups, and theirs), never the tier. A
+     call with the id missing would be the bug this catches, because a direct
+     member's keys would silently not reach req.permissions. */
+  assert.match(auth, /rolePermissions\.effectiveFor\(db, user\.role, user\.id\)/,
     'the server resolves the configured set, not the tier');
   assert.match(auth, /user\.permissions = \[\.\.\.held\]/,
     'and hands the SAME set to the browser');
