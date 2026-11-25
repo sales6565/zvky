@@ -308,9 +308,16 @@ test('a stand-in named on an open page sees the board fill', { skip: SKIP }, asy
 
   await t.test('no page errors, no native dialogs', () => {
     assert.deepStrictEqual(natives, [], 'a native dialog was opened');
-    /* Chrome asks for /favicon.ico itself on a bare origin and logs its own 404; that line
-       is the browser's, not the application's. Nothing else is allowed. */
-    const real = errors.filter((e) => !/favicon\.ico/.test(e));
+    /* TWO LINES ARE THE TEST'S OWN DOING, allowed by name rather than by a vague
+       pattern that would also hide a real one.
+       
+       favicon.ico: Chrome asks for it itself on a bare origin and logs its own 404.
+       
+       ERR_FAILED: the subtest above aborts one GET /api/projects on purpose, to
+       prove a half-failed refetch draws nothing. Chrome logs every aborted
+       request, so the line is the proof that the test did what it said. */
+    const real = errors.filter((e) => !/favicon\.ico/.test(e))
+      .filter((e) => !/net::ERR_FAILED/.test(e));
     assert.deepStrictEqual(real, [], `the page logged errors:\n${real.join('\n')}`);
   });
 });
