@@ -353,6 +353,70 @@ test('role group members, in Chrome', { skip: SKIP }, async (t) => {
     assert.ok(!/Also in groups/.test(hers), 'no row when there is nothing to say');
   });
 
+  await t.test('the screen is drawn from the KEY, not from the tier', async () => {
+    /* ===========================================================================
+     * WHY THIS SUBTEST EXISTS: a mutation walked past everything above it.
+     *
+     * The Role Groups section is drawn behind can('settings.role_groups'). Swap
+     * that for caps().projectScope === 'all' — the page deciding from the tier
+     * instead of asking the permission — and every test in this file still
+     * passes, because the owner driving them is a Super Admin and holds both.
+     *
+     * The case that tells them apart is somebody who holds the KEY and is NOT at
+     * that tier: a team lead the studio has given the group screen to. Under the
+     * mutation their Settings page has no Role Groups section at all, which is
+     * the real complaint this would produce — "I granted it and nothing
+     * appeared", which is exactly the bug class scripts/role-can.js was written
+     * for.
+     *
+     * The grant is put back at the end, so the suite leaves the designation as
+     * it found it. */
+    const lead = await as('owner', '/users', { method: 'POST', body: {
+      name: 'Lena Cruz', email: 'lena@rgui.test', role: 'team_lead', password: PASSWORD } });
+    assert.strictEqual(lead.status, 201, JSON.stringify(lead.body));
+    token.lena = (await api(server.base, '/auth/login',
+      { method: 'POST', body: { email: 'lena@rgui.test', password: PASSWORD } })).body.token;
+    await as('lena', '/auth/tour-seen', { method: 'POST' });
+
+    const held = (await as('owner', '/permissions/roles/team_lead')).body.role
+      .permissions.filter((pp) => pp.enabled).map((pp) => pp.key);
+    assert.ok(!held.includes('settings.role_groups'), 'a lead does not hold it by default');
+
+    const page = await (await browser.newContext()).newPage();
+    page.on('pageerror', (e) => errors.push(`lena: ${e && e.message}`));
+    page.on('dialog', async (d) => { natives.push(`lena: ${d.type()}`); await d.dismiss(); });
+    try {
+      await signIn(page, 'lena@rgui.test');
+      await page.click('[data-tab="settings"]');
+      assert.strictEqual(await page.evaluate(() => Boolean(document.getElementById('roleGroupsSection'))),
+        false, 'without the key there is no section');
+      assert.strictEqual(await page.evaluate(() => can('settings.role_groups')), false);
+
+      /* THE GRANT, and the same page without a reload — it rides the poll that
+         carries every other permission change. */
+      assert.strictEqual((await as('owner', '/permissions/roles/team_lead', { method: 'PUT',
+        body: { permissions: [...held, 'settings.role_groups'] } })).status, 200);
+
+      await page.waitForFunction(() => can('settings.role_groups'), null, { timeout: WITHIN });
+      await page.click('[data-tab="users"]');
+      await page.click('[data-tab="settings"]');
+      await page.waitForSelector('[data-section="role-groups"]', { timeout: 45000 });
+      assert.ok(await page.evaluate(() => Boolean(document.getElementById('roleGroupsSection'))),
+        'with the key, a lead gets the section — the tier was never the question');
+
+      /* AND THE PICKER WORKS FOR THEM TOO, which is the other half of the key
+         being the question: the endpoint behind it is this router's, not
+         user.view's, and a lead holds no user.view. */
+      assert.ok(!held.includes('user.view'), 'a lead cannot open the staff directory');
+      const search = await as('lena', '/role-groups/users?search=Ana');
+      assert.strictEqual(search.status, 200, JSON.stringify(search.body));
+      assert.strictEqual((search.body.users || []).length, 1);
+    } finally {
+      await as('owner', '/permissions/roles/team_lead', { method: 'PUT', body: { permissions: held } });
+      await page.close();
+    }
+  });
+
   await t.test('no native dialogs, no page errors, in either session', () => {
     assert.deepStrictEqual(natives, [], 'a native dialog was opened');
     /* Chrome asks for /favicon.ico itself and logs its own 404; that line is the

@@ -24,9 +24,14 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+
 const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
 const roleGroups = require('../src/role-groups');
 const catalog = require('../src/permission-catalog');
+
+const ROOT = path.join(__dirname, '..');
 
 const cfg = config('rgusers');
 const PASSWORD = 'RgUsers-Test-1!';
@@ -143,6 +148,19 @@ test('users in a role group', { skip: cfg ? false : SKIP_REASON }, async (t) => 
     assert.strictEqual((await setUsers(secondDirect, [id.twice])).status, 200);
     assert.strictEqual((await setUsers(viaGroup, [id.twice])).status, 200);
 
+    /* THE "IN BOTH" COLUMN, and the first draft of this table did not have it.
+
+       Every account above reaches each key by exactly one route, because
+       `twice`'s two groups are both DIRECT ones and grantsForUser() de-duplicates
+       inside itself. So a union built by concatenation instead of by Set still
+       produced no duplicate, and a mutation that did exactly that survived.
+
+       `both` is a game_animator, so viaGroup reaches them through their
+       designation; adding them to secondDirect, which grants the SAME key, makes
+       VIA_KEY arrive by both routes at once. That is the only shape in which a
+       duplicate can exist, and the assertion for it is below. */
+    assert.strictEqual((await setUsers(secondDirect, [id.twice, id.both])).status, 200);
+
     /* And one key on the designation itself, so "the role's own" is in the table
        rather than assumed. game_artist gets ROLE_KEY. */
     const artistHeld = (await as('root', '/permissions/roles/game_artist')).body.role
@@ -155,7 +173,9 @@ test('users in a role group', { skip: cfg ? false : SKIP_REASON }, async (t) => 
       ['no group at all', 'plain', { role: true, via: false, direct: false }],
       ['group via role only', 'viarole', { role: false, via: true, direct: false }],
       ['direct group only', 'direct', { role: true, via: false, direct: true }],
-      ['via role AND direct', 'both', { role: false, via: true, direct: true }],
+      /* `both` now holds VIA_KEY by two routes at once — the "in both" case. */
+      ['one key by both routes, and another direct', 'both',
+        { role: false, via: true, direct: true }],
       ['two direct groups, one key shared with a role group', 'twice',
         { role: true, via: true, direct: false }],
     ];
@@ -167,13 +187,29 @@ test('users in a role group', { skip: cfg ? false : SKIP_REASON }, async (t) => 
       assert.strictEqual(held.has(DIRECT_KEY), want.direct, `${label}: ${DIRECT_KEY}`);
 
       /* NO DUPLICATES, ANYWHERE. /auth/me sends an array, and an array is where a
-         union built by concatenation would show. `twice` is the case that would
-         break it: VIA_KEY reaches them through a group their designation is in
-         AND through a group they were added to. */
+         union built by concatenation would show. `both` is the case that breaks
+         it: VIA_KEY reaches them through the group their DESIGNATION is in and
+         through a group they were added to BY NAME. */
       const list = (await as(who, '/auth/me')).body.user.permissions;
       assert.strictEqual(new Set(list).size, list.length,
         `${label}: the permission list repeats a key`);
     }
+
+    /* THE OVERLAP, STATED RATHER THAN LEFT TO THE LOOP. `both` reaches VIA_KEY
+       twice over; it must appear once, and it must still be there if either
+       route is taken away. */
+    const bothList = (await as('both', '/auth/me')).body.user.permissions;
+    assert.strictEqual(bothList.filter((k) => k === VIA_KEY).length, 1,
+      'a key reachable two ways is one entry');
+
+    assert.strictEqual((await setUsers(secondDirect, [id.twice])).status, 200);
+    assert.ok((await holds('both')).has(VIA_KEY),
+      'take the direct membership away and their designation still carries it');
+    assert.strictEqual((await setUsers(secondDirect, [id.twice, id.both])).status, 200);
+    assert.strictEqual((await setRoles(viaGroup, [])).status, 200);
+    assert.ok((await holds('both')).has(VIA_KEY),
+      'take the role out of the group and the direct membership still carries it');
+    assert.strictEqual((await setRoles(viaGroup, ['game_animator'])).status, 200);
   });
 
   await t.test('impliedBy chains apply to a key a group granted', async () => {
@@ -260,18 +296,37 @@ test('users in a role group', { skip: cfg ? false : SKIP_REASON }, async (t) => 
       [gid, id.spare]);
     assert.strictEqual(Number(rows[0].n), 1, 'deactivating keeps the membership');
 
-    /* AND THE GRANT STOPS. Asked the way a third party asks it — the group
-       screen's own members list and the diagnostic both read through the
-       module — because the account itself cannot sign in to be asked. */
-    assert.strictEqual(roleGroups.grantsForUser.length, 2, 'grantsForUser(db, userId)');
-    const stillGranted = await sql(cfg,
-      `SELECT COUNT(*) AS n
-         FROM role_group_users gu
-         JOIN users u ON u.id = gu.user_id AND u.is_active = 1
-         JOIN role_group_permissions gp ON gp.group_id = gu.group_id
-        WHERE gu.user_id = ?`, [id.spare]);
-    assert.strictEqual(Number(stillGranted[0].n), 0,
-      'the resolution join declines to apply a group to an inactive account');
+    /* AND THE GRANT STOPS — ASKED OF THE APPLICATION'S OWN RESOLUTION, which is
+       the only version of this assertion worth having.
+
+       The first draft asked the database with a copy of the join written out in
+       this file. A mutation that removed `AND u.is_active = 1` from
+       src/role-groups.js therefore changed nothing here: the test was checking
+       SQL it had written itself. That is the whole failure mode a test like this
+       exists to catch, so it now runs effectiveFor() in a child process — the
+       same function authenticate() calls, against the same database, with the
+       connection settings in the environment variables src/db reads.
+
+       A CHILD PROCESS because this one must not require src/db: the suite's own
+       pool points at a different database. The pattern is tests/chat.test.js's
+       sweep helper. And it has to be asked ABOUT this person rather than AS
+       them, because a deactivated account cannot sign in at all. */
+    const resolvedFor = (userId, role) => {
+      const out = execFileSync(process.execPath, ['-e',
+        "const db=require('./src/db');"
+        + "require('./src/role-permissions').effectiveFor(db, process.argv[1], process.argv[2])"
+        + ".then((set)=>{process.stdout.write(JSON.stringify([...set]));return db.end();})"
+        + ".catch((e)=>{console.error(e);process.exit(1);});", role, userId], {
+        cwd: ROOT,
+        env: { ...process.env,
+          DB_HOST: cfg.host, DB_PORT: String(cfg.port), DB_NAME: cfg.database,
+          DB_USER: cfg.user, DB_PASSWORD: cfg.password, DATABASE_URL: '' },
+      }).toString();
+      return new Set(JSON.parse(out));
+    };
+
+    assert.ok(!resolvedFor(id.spare, 'game_artist').has(VIA_KEY),
+      'the resolution gives a deactivated account nothing from its groups');
 
     /* Signing in is refused outright, which is the other half of why an inactive
        member is harmless. */
@@ -284,6 +339,8 @@ test('users in a role group', { skip: cfg ? false : SKIP_REASON }, async (t) => 
     token.spare = await login('spare@rg.test');
     assert.ok((await holds('spare')).has(VIA_KEY),
       'reactivating gives the group back, with no membership to restore by hand');
+    assert.ok(resolvedFor(id.spare, 'game_artist').has(VIA_KEY),
+      'and the resolution says so when asked about them, too');
 
     assert.strictEqual((await setUsers(gid, [])).status, 200);
   });
