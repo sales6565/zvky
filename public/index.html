@@ -26467,7 +26467,27 @@ async function applyPermissionChange(){
    * handed a project is the bug; one refetch at that moment is the fix.
    *
    * NO NEW POLLING LOOP. This is the notification interval that was already running. */
-  await refreshProjects();
+  const listed = await refreshProjects();
+  if(!listed){
+    /* THE PROJECT LIST DID NOT COME BACK, so nothing is redrawn — and the flag goes
+     * back up so the next tick tries again.
+     *
+     * WHY THIS BRANCH EXISTS. refreshProjects() swallows its error and answers
+     * false; render() then draws the board from whatever state.projects holds,
+     * which after a failed fetch is the empty list it started with. A frozen
+     * full-suite run caught exactly that: state.assets had all seven of the
+     * project's rows while the screen read "No projects assigned to you yet" —
+     * the worst of both answers, and told to somebody who had just been given
+     * the project.
+     *
+     * Rendering half of a refetch is worse than rendering none of it: the board
+     * keeps what it had, which is honestly "nothing has changed yet", and the
+     * membership is picked up on the following poll. Putting the flag back is
+     * what makes that true — consumed and dropped, the change would have been
+     * forgotten until the next time somebody edited the project. */
+    projectTeamsMoved = true;
+    return;
+  }
   await render();
 }
 

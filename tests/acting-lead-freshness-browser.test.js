@@ -241,6 +241,71 @@ test('a stand-in named on an open page sees the board fill', { skip: SKIP }, asy
       'still the same document');
   });
 
+  await t.test('a refetch that half fails draws nothing, and the next poll finishes it', async () => {
+    /* ===========================================================================
+     * THE FAILURE A FROZEN FULL-SUITE RUN FOUND, now its own test.
+     *
+     * applyPermissionChange() refetches two things when the memberships move: the
+     * project list, then the board. refreshProjects() swallows its error and
+     * answers false, and that answer used to be ignored — so a transient failure
+     * left state.projects empty while loadAssets() happily filled state.assets,
+     * and the screen read "No projects assigned to you yet" over a board that had
+     * every row of the project. Told to somebody who had just been given it.
+     *
+     * Reproduced here by failing the request itself, once: Playwright aborts the
+     * next GET /api/projects and lets everything after it through. What must
+     * happen is that the page draws NOTHING rather than half of it, and picks the
+     * membership up on the following poll — which only works because the flag
+     * goes back up when the refetch fails.
+     */
+    const owner = await as('owner', `/projects/${id.A}`, { method: 'PATCH', body: {
+      actingTeamLeadIds: [id.artist] } });
+    assert.strictEqual(owner.status, 200, JSON.stringify(owner.body));
+
+    let aborted = 0;
+    const once = async (route) => {
+      if (aborted === 0 && /\/api\/projects(\?|$)/.test(route.request().url())) {
+        aborted += 1;
+        return route.abort('failed');
+      }
+      return route.continue();
+    };
+    await page.route('**/api/projects*', once);
+
+    try {
+      /* Wait for the failure to have happened, which is the poll arriving. */
+      await page.waitForFunction('typeof state !== "undefined"', null, { timeout: 5000 });
+      const start = Date.now();
+      while (aborted === 0 && Date.now() - start < WITHIN) {
+        await page.waitForTimeout(500);
+      }
+      assert.strictEqual(aborted, 1, 'the project fetch was failed once');
+
+      /* THE SCREEN MUST NOT BE HALF-DRAWN. Checked immediately after the failed
+         tick: the board still shows their own work, and nowhere does it claim
+         they have no projects. */
+      const text = await page.evaluate(() => document.getElementById('listView').textContent);
+      assert.ok(!/No projects assigned to you yet/.test(text),
+        `a failed refetch must not tell them they have no projects: ${text.slice(0, 160)}`);
+      assert.ok(await page.evaluate(() => (state.projects || []).length > 0),
+        'and the project list it already had is still there');
+    } finally {
+      await page.unroute('**/api/projects*', once);
+    }
+
+    /* AND THE FOLLOWING POLL FINISHES THE JOB. The flag went back up, so the next
+       tick refetches both and the board fills — late, but correct, and without
+       anybody touching the page. */
+    await page.waitForFunction('(state.assets || []).length === 7', null, { timeout: WITHIN });
+    assert.strictEqual(await page.evaluate(() => window.__sameDocument), 'yes',
+      'still the same document');
+
+    // Back to where the suite found things.
+    assert.strictEqual((await as('owner', `/projects/${id.A}`, { method: 'PATCH', body: {
+      actingTeamLeadIds: [] } })).status, 200);
+    await page.waitForFunction('(state.assets || []).length === 1', null, { timeout: WITHIN });
+  });
+
   await t.test('no page errors, no native dialogs', () => {
     assert.deepStrictEqual(natives, [], 'a native dialog was opened');
     /* Chrome asks for /favicon.ico itself on a bare origin and logs its own 404; that line
