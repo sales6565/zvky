@@ -86,11 +86,17 @@ async function authenticate(req, res, next) {
     }
     user.capabilities = capabilitiesFor(user.role);
 
-    // What this person may do, read from their role. Per request off the
-    // freshly-read role, so changing a role's permissions — or moving somebody
-    // to another role — takes effect on their very next request. No re-login,
-    // no waiting for a token to expire.
-    const held = await rolePermissions.effectiveFor(db, user.role).catch(() => new Set());
+    // What this person may do: their role's permissions, the groups their role
+    // is in, and the groups they were added to individually. Per request off
+    // the freshly-read account, so changing a role's permissions — moving
+    // somebody to another role, or putting them in a group — takes effect on
+    // their very next request. No re-login, no waiting for a token to expire,
+    // and nothing cached to invalidate.
+    //
+    // THE ACCOUNT ID IS PASSED, which is what turns on the third source. It is
+    // read from the row this function just loaded, so a membership added a
+    // second ago is in the answer.
+    const held = await rolePermissions.effectiveFor(db, user.role, user.id).catch(() => new Set());
     user.permissions = [...held];
     req.permissions = held;
 

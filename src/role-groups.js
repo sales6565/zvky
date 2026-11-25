@@ -105,6 +105,60 @@ async function grantsForRole(db, roleKey) {
   return new Set(rows.map((r) => r.permission_key).filter((k) => catalog.isPermission(k)));
 }
 
+/* THE SAME QUESTION FOR ONE PERSON: every grant that reaches them through a
+ * group they were added to DIRECTLY — Prompt 73.
+ *
+ * A sibling of grantsForRole() rather than a replacement for it. The two answer
+ * different questions and effectiveFor() unions both, so neither is a second
+ * resolution path: there is one union, in one function, fed by two reads.
+ *
+ * INACTIVE ACCOUNTS GET NOTHING, and the join is where that is decided rather
+ * than in a caller. A deactivated account cannot sign in at all, so for the
+ * request path this is belt and braces — but effectiveFor() is also asked
+ * ABOUT other people (the password-reset guard, hold-explain, the diagnostic),
+ * and those must not be told that a deactivated account still holds a group's
+ * keys. The row stays; the grant stops. Reactivating gives it back with no
+ * membership to restore by hand, which is the same thing that happens to a
+ * role when an account comes back.
+ *
+ * ONE QUERY, keyed on user_id, exactly like its sibling: a studio with forty
+ * groups costs what a studio with one costs.
+ */
+async function grantsForUser(db, userId) {
+  if (!userId) return new Set();
+  const { rows } = await db.query(
+    `SELECT DISTINCT gp.permission_key
+       FROM role_group_users gu
+       JOIN users u ON u.id = gu.user_id AND u.is_active = 1
+       JOIN role_group_permissions gp ON gp.group_id = gu.group_id
+      WHERE gu.user_id = $1`,
+    [userId]
+  );
+  return new Set(rows.map((r) => r.permission_key).filter((k) => catalog.isPermission(k)));
+}
+
+/* WHICH GROUPS THIS PERSON IS IN DIRECTLY, by name — for the user detail panel
+ * and for the diagnostic, both of which report rather than decide.
+ *
+ * NOT FILTERED BY is_active. "Also in groups: Release Managers" is a true
+ * statement about a deactivated account and the thing an administrator needs to
+ * see before reactivating it; whether it GRANTS anything is grantsForUser()'s
+ * question, asked above and answered no. A panel that hid the membership would
+ * make a reactivated account's permissions arrive from nowhere.
+ */
+async function groupsForUser(db, userId) {
+  if (!userId) return [];
+  const { rows } = await db.query(
+    `SELECT g.id, g.name, g.kind
+       FROM role_group_users gu
+       JOIN role_groups g ON g.id = gu.group_id
+      WHERE gu.user_id = $1
+      ORDER BY g.name`,
+    [userId]
+  );
+  return rows.map((r) => ({ id: r.id, name: r.name, kind: r.kind }));
+}
+
 /* The same answer, but saying WHICH group each grant came from — for the role's
    permission view, which has to show inheritance rather than just the union. */
 async function inheritanceForRole(db, roleKey) {
@@ -139,11 +193,26 @@ async function list(db) {
   if (!groups.length) return [];
   const { rows: members } = await db.query('SELECT group_id, role_key FROM role_group_members');
   const { rows: grants } = await db.query('SELECT group_id, permission_key FROM role_group_permissions');
+  /* THE DIRECT MEMBERS, in the screen's one extra query rather than one per
+     group — the same shape as the two reads above it.
+     
+     EACH ONE CARRIES THEIR ROLE, because the editor's question is not only "who
+     is in this group" but "who is in it twice over": somebody whose role is
+     ALSO in the group gains nothing from the direct row, and the screen marks
+     them so the owner can see that rather than working it out. Deciding it
+     here, where both lists are in hand, keeps the page from computing it. */
+  const { rows: directs } = await db.query(
+    `SELECT gu.group_id, u.id, u.\`name\`, u.email, u.\`role\`, u.is_active
+       FROM role_group_users gu
+       JOIN users u ON u.id = gu.user_id
+      ORDER BY u.\`name\``
+  );
 
   const byId = new Map(groups.map((g) => [g.id, {
     ...g,
     kindLabel: KIND_LABELS[g.kind] || g.kind,
     roles: [],
+    users: [],
     permissions: [],
   }]));
   for (const m of members) {
@@ -157,9 +226,27 @@ async function list(db) {
     if (!g || !catalog.isPermission(p.permission_key)) continue;
     g.permissions.push(p.permission_key);
   }
+  for (const d of directs) {
+    const g = byId.get(d.group_id);
+    if (!g) continue;
+    const def = roleDef(d.role);
+    g.users.push({
+      id: d.id,
+      name: d.name,
+      email: d.email,
+      role: d.role,
+      roleLabel: def ? def.label : d.role,
+      isActive: d.is_active !== 0,
+      /* Filled in below, once this group's role list is known. */
+      viaRole: false,
+    });
+  }
   for (const g of byId.values()) {
     g.roles.sort((a, b) => a.label.localeCompare(b.label));
     g.permissions.sort();
+    const roleKeys = new Set(g.roles.map((r) => r.key));
+    for (const u of g.users) u.viaRole = roleKeys.has(u.role);
+    g.users.sort((a, b) => String(a.name).localeCompare(String(b.name)));
   }
   return [...byId.values()];
 }
@@ -276,6 +363,93 @@ function validateRoles(keys) {
   return { ok: true, roles: [...new Set(keys)] };
 }
 
+/* THE USERS A GROUP MAY CONTAIN — Prompt 73.
+ *
+ * Shaped like validateRoles(): unknown ids are refused BY NAME rather than
+ * dropped, because a group that silently ignored half of what somebody sent is
+ * a group whose membership nobody can trust. The two differences from roles are
+ * the ones a role cannot have:
+ *
+ *   ONLY ACTIVE ACCOUNTS MAY BE ADDED. A deactivated account gets nothing from
+ *     a group (see grantsForUser), so adding one would be a row that does
+ *     nothing while reading as though it did something. Refused with the reason
+ *     and the names.
+ *   NO SELF-ADDING RULE, and that is deliberate rather than an omission. The
+ *     escalation guard below already says nobody hands out a key they do not
+ *     hold, which is what adding yourself to a powerful group would be. A
+ *     separate self-check would only refuse an administrator adding themselves
+ *     to a group of keys they already hold, which is harmless and useful.
+ *
+ * Needs the database, unlike its sibling: "is this a real, active account" is a
+ * row, where a designation is reference data already in memory.
+ */
+async function validateUsers(db, ids) {
+  if (!Array.isArray(ids)) {
+    return { ok: false, status: 400, field: 'users', error: 'Send the users in this group.' };
+  }
+  const wanted = [...new Set(ids.map((id) => String(id || '')).filter(Boolean))];
+  if (!wanted.length) return { ok: true, users: [] };
+
+  const holes = wanted.map((_, i) => `$${i + 1}`).join(',');
+  const { rows } = await db.query(
+    `SELECT id, \`name\`, is_active FROM users WHERE id IN (${holes})`, wanted);
+  const found = new Map(rows.map((r) => [r.id, r]));
+
+  const missing = wanted.filter((id) => !found.has(id));
+  if (missing.length) {
+    return { ok: false, status: 400, field: 'users',
+      error: missing.length === 1
+        ? 'That account does not exist.'
+        : `${missing.length} of those accounts do not exist.` };
+  }
+  const inactive = wanted.filter((id) => found.get(id).is_active === 0);
+  if (inactive.length) {
+    return { ok: false, status: 400, field: 'users',
+      error: `${inactive.map((id) => found.get(id).name).join(', ')} `
+        + `${inactive.length === 1 ? 'is a deactivated account' : 'are deactivated accounts'}, `
+        + 'so a group would grant them nothing. Reactivate the account first.' };
+  }
+  return { ok: true, users: wanted };
+}
+
+/* THE ESCALATION GUARD FOR HANDING A GROUP TO SOMEBODY — a person, and from
+ * Prompt 73 a role as well.
+ *
+ * ===========================================================================
+ * WHAT THE RULE WAS, AND WHY THIS IS WHERE IT NOW LIVES.
+ *
+ * Until now the escalation rule was entirely on the PERMISSIONS side:
+ * validatePermissions() refuses a key the editor does not hold, so a group
+ * cannot be BUILT out of permissions its author lacks. Attaching a role was
+ * checked for nothing beyond holding settings.role_groups.
+ *
+ * That left a door open. A group's keys were vetted against whoever put them
+ * there — never against whoever later attaches a role to it. So an editor with
+ * the group screen and nothing else could take a group granting asset.delete,
+ * attach a designation, and hand out a permission they could not have granted
+ * directly on the role screen.
+ *
+ * The brief asks that adding a USER carry "the same escalation guard as for
+ * attaching a role". The only way to make the two the same is one function used
+ * by both, and the only reading of it that is actually a guard is the strict
+ * one. So: handing a group's grants to anybody requires holding every one of
+ * them. The message names the keys, so the refusal says what to do about it.
+ *
+ * A GROUP THAT GRANTS NOTHING is open to any editor, and that is not a hole:
+ * there is nothing to hand out, and keys cannot be added to it later without
+ * passing validatePermissions() against whoever adds them.
+ */
+function mayHandOut(group, editorHolds) {
+  const holds = editorHolds || new Set();
+  const beyond = group.permissions.filter((k) => !holds.has(k));
+  if (!beyond.length) return { ok: true };
+  return {
+    ok: false, status: 403, field: 'permissions',
+    error: `"${group.name}" grants ${beyond.map((k) => label(k)).join(', ')}, which you do not `
+      + 'hold yourself — so you cannot give this group to anybody. Ask somebody who holds it.',
+  };
+}
+
 async function record(db, { groupId, groupName, action, detail, actor }) {
   await db.query(
     `INSERT INTO role_group_audit (id, group_id, group_name, action, detail, actor_id, actor_email)
@@ -365,11 +539,17 @@ async function remove(db, id, actor) {
   return { ok: true, deleted: before };
 }
 
-async function setRoles(db, id, roleKeys, actor) {
+async function setRoles(db, id, roleKeys, actor, editorHolds) {
   const group = await get(db, id);
   if (!group) return { ok: false, status: 404, error: 'That group does not exist.' };
   const checked = validateRoles(roleKeys);
   if (!checked.ok) return checked;
+  /* HANDING THIS GROUP TO A DESIGNATION IS HANDING OUT ITS KEYS — see
+     mayHandOut(). The same call guards setUsers() below, which is what makes
+     "the rule for a user is the rule for a role" true of the code rather than
+     of two paragraphs that agree today. */
+  const allowed = mayHandOut(group, editorHolds);
+  if (!allowed.ok) return allowed;
 
   const had = new Set(group.roles.map((r) => r.key));
   const wanted = new Set(checked.roles);
@@ -392,6 +572,61 @@ async function setRoles(db, id, roleKeys, actor) {
       actor });
   }
   return { ok: true, group: await get(db, id), added, removed };
+}
+
+/* THE DIRECT MEMBERS OF A GROUP, SET IN ONE CALL — Prompt 73.
+ *
+ * The same shape as setRoles(): the editor sends the list they want, this works
+ * out the difference, and only the difference is written and audited. A list
+ * identical to what is stored is a no-op that records nothing, which is what
+ * makes saving the editor twice harmless and makes "adding somebody already in
+ * the group is idempotent" fall out rather than being special-cased.
+ *
+ * INSERT IGNORE against the primary key is the other half of that: two requests
+ * racing to add the same person end with one row and no error.
+ *
+ * WHAT IT RETURNS: the ids added and removed, because the caller has to audit
+ * them, notify the people added, and say how many of each in the response. It
+ * returns ids rather than names — the caller already has the group with every
+ * member's name on it.
+ */
+async function setUsers(db, id, userIds, actor, editorHolds) {
+  const group = await get(db, id);
+  if (!group) return { ok: false, status: 404, error: 'That group does not exist.' };
+  const checked = await validateUsers(db, userIds);
+  if (!checked.ok) return checked;
+  const allowed = mayHandOut(group, editorHolds);
+  if (!allowed.ok) return allowed;
+
+  const had = new Set(group.users.map((u) => u.id));
+  const wanted = new Set(checked.users);
+  const added = [...wanted].filter((uid) => !had.has(uid));
+  const removed = [...had].filter((uid) => !wanted.has(uid));
+
+  for (const uid of removed) {
+    await db.query('DELETE FROM role_group_users WHERE group_id = $1 AND user_id = $2', [id, uid]);
+  }
+  for (const uid of added) {
+    await db.query(
+      'INSERT IGNORE INTO role_group_users (group_id, user_id, added_by_email) VALUES ($1,$2,$3)',
+      [id, uid, actor ? actor.email : null]
+    );
+  }
+  const after = await get(db, id);
+  if (added.length || removed.length) {
+    /* THE AUDIT LINE NAMES PEOPLE, not ids: this row is read by a human
+       months later, and a uuid tells them nothing. The names come from the
+       group as it is now for anybody added, and from the group as it WAS for
+       anybody removed — who is, by definition, no longer in the new one. */
+    const nameOf = (uid) => (after.users.find((u) => u.id === uid)
+      || group.users.find((u) => u.id === uid) || {}).name || uid;
+    await record(db, { groupId: id, groupName: group.name, action: 'users',
+      detail: [added.length ? `+${added.map(nameOf).join(', ')}` : '',
+        removed.length ? `-${removed.map(nameOf).join(', ')}` : '']
+        .filter(Boolean).join(' '),
+      actor });
+  }
+  return { ok: true, group: after, added, removed };
 }
 
 async function setPermissions(db, id, keys, actor, editorHolds) {
@@ -452,7 +687,9 @@ async function audit(db, limit = 100) {
 
 module.exports = {
   KINDS, KIND_LABELS, NAME_MAX, DESCRIPTION_MAX, NEVER_GRANTABLE, MANAGE_KEY,
-  grantable, grantsForRole, inheritanceForRole, list, get, impactOfDeleting,
-  create, rename, remove, setRoles, setPermissions, forgetRole, audit,
-  validateName, validateKind, validatePermissions, validateRoles,
+  grantable, grantsForRole, grantsForUser, groupsForUser, inheritanceForRole,
+  list, get, impactOfDeleting,
+  create, rename, remove, setRoles, setUsers, setPermissions, forgetRole, audit,
+  validateName, validateKind, validatePermissions, validateRoles, validateUsers,
+  mayHandOut,
 };

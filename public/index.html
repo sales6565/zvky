@@ -363,6 +363,24 @@ body.chat-open #app{padding-left:calc(var(--chat-w, 380px) + 24px);}
   /* A toolbar of buttons and filters with the default nowrap pushed the page
      to 999px on the Users tab. Wrapping is the whole fix; nothing about it is
      wrong on a desktop, where it never wraps because it fits. */
+  /* The role-group editor's user picker — Prompt 73. Built from the tokens the
+     rest of this screen uses (--input-bg, --line, --ink-faint) rather than new
+     colours, so it follows the theme and both colour schemes with it. */
+  .rg-hits{margin-top:6px;border:1px solid var(--line);border-radius:8px;max-height:210px;overflow:auto;}
+  .rg-hit{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:none;
+    border:0;border-bottom:1px solid var(--line);color:var(--ink);padding:7px 10px;font:inherit;
+    font-size:12.5px;cursor:pointer;}
+  .rg-hit:last-child{border-bottom:0;}
+  .rg-hit:hover{background:var(--input-bg);}
+  .rg-chips{display:flex;flex-wrap:wrap;gap:6px;}
+  .rg-chip{display:inline-flex;align-items:center;gap:6px;background:var(--input-bg);
+    border:1px solid var(--line);border-radius:999px;padding:3px 4px 3px 10px;font-size:12.5px;}
+  /* Dimmed, not hidden: this membership is real and keeps granting if the role
+     is later taken out of the group. */
+  .rg-chip.dim{opacity:.72;}
+  .rg-x{background:none;border:0;color:var(--ink-faint);cursor:pointer;font-size:15px;
+    line-height:1;padding:0 6px;border-radius:999px;}
+  .rg-x:hover{color:var(--brand-accent);}
   #usersView > div{flex-wrap:wrap;}
 
   /* A GRID ITEM WILL NOT SHRINK BELOW ITS CONTENT. .pnl-panel measured 414px
@@ -15682,7 +15700,21 @@ async function openUserDetail(id){
           : '<span class="ud-none">Not set</span>')) +
     row('Level 2 Reporting', user.reportsToL2
       ? `${escapeHTML(user.reportsToL2.name)} <span class="ref-key">— ${escapeHTML(roleInfo(user.reportsToL2.role).label)}</span>`
-      : '<span class="ud-none">Not set</span>');
+      : '<span class="ud-none">Not set</span>') +
+    /* ALSO IN GROUPS — Prompt 73, read-only and only when there are any.
+     *
+     * An extra row that says "None" for almost everybody would be noise: direct
+     * membership is the exception, which is the point of the feature. So the row
+     * appears when there is something to say and is absent otherwise.
+     *
+     * NAMES, NOT PERMISSIONS. This panel is behind user.view — the staff
+     * directory's key — and what a group grants belongs to the group screen,
+     * behind its own. The server sends names for the same reason. */
+    (Array.isArray(user.groups) && user.groups.length
+      ? row('Also in groups', `${user.groups.map(gr=>escapeHTML(gr.name)).join(', ')}
+          <div class="pm-note">Added individually, so this account has these groups'
+          permissions on top of its role's.</div>`)
+      : '');
 
   document.getElementById('editFromDetail').onclick = ()=>openEditUser(user.id);
   userDetailWrap.classList.add('show');
@@ -24613,6 +24645,84 @@ function rgMessage(text){
   if(el) el.textContent = text || '';
 }
 
+/* THE USERS PICKED IN THE EDITOR, BEFORE ANYBODY PRESSES SAVE — Prompt 73.
+ *
+ * ===========================================================================
+ * WHY THERE IS A DRAFT AT ALL. The roles half of this editor is a grid of
+ * checkboxes: the DOM holds the pending state and reading it back on save is
+ * enough. A searchable picker cannot work that way — the chips for people who
+ * do not match the current search term have no checkbox to be found in, so the
+ * selection has to live somewhere that survives typing.
+ *
+ * ONE DRAFT, KEYED BY GROUP. Opening another group's card replaces it rather
+ * than merging into it, which is what stops a selection made in one editor
+ * from being saved against another. It is seeded from the group the server
+ * sent, so an editor that is opened and closed without a save changes nothing.
+ */
+let rgDraft = null;        // { groupId, users: [...] }
+let rgUserHits = null;     // the last search's results, or null for "not searched"
+let rgUserTotal = 0;       // how many matched, which can be more than were sent
+
+function rgDraftFor(g){
+  if(!rgDraft || rgDraft.groupId !== g.id){
+    rgDraft = { groupId: g.id, users: (g.users||[]).map(u=>({ ...u })) };
+  }
+  return rgDraft;
+}
+
+/* THE CHIPS, THE COUNT AND THE SEARCH RESULTS — redrawn on its own, so typing
+ * in the box does not cost a re-render of the whole screen (and does not blow
+ * away the box's own value, which is why the input is OUTSIDE this block).
+ *
+ * "ALREADY INCLUDED VIA ROLE" is the one piece of judgement here, and it is the
+ * server's: list() marks each direct member whose designation is in the group
+ * as well. That person gains nothing from the direct row, and the owner adding
+ * people one at a time cannot see it from the names alone. Shown rather than
+ * silently dropped, because the row is still a real membership — it keeps
+ * granting if the role is later taken out of the group, which is exactly why
+ * somebody might want both.
+ */
+function rgUsersBlockHTML(g){
+  const draft = rgDraftFor(g);
+  const roleKeys = new Set(g.roles.map(r=>r.key));
+  const picked = new Set(draft.users.map(u=>u.id));
+  const viaRole = draft.users.filter(u=>roleKeys.has(u.role)).length;
+
+  const hits = (rgUserHits||[]).filter(u=>!picked.has(u.id));
+  const results = rgUserHits === null ? '' : (hits.length
+    ? `<div class="rg-hits">${hits.map(u=>`
+        <button class="rg-hit" data-rg-add="${escapeHTML(u.id)}"
+          data-rg-name="${escapeHTML(u.name)}" data-rg-role="${escapeHTML(u.role)}"
+          data-rg-rolelabel="${escapeHTML(u.roleLabel||u.role)}">
+          <span>${escapeHTML(u.name)}</span>
+          <span class="ref-key">${escapeHTML(u.roleLabel||u.role)}</span>
+          ${roleKeys.has(u.role)?'<span class="pm-tag">role already in this group</span>':''}
+        </button>`).join('')}
+        ${rgUserTotal > (rgUserHits||[]).length
+          ? `<div class="pm-note">${rgUserHits.length} of ${rgUserTotal} shown — keep typing to narrow it.</div>`
+          : ''}
+      </div>`
+    : '<div class="pm-note">Nobody active matches that. Deactivated accounts cannot be added — '
+      + 'a group would grant them nothing until they are reactivated.</div>');
+
+  return `
+    ${results}
+    <div class="rg-chips" style="margin-top:8px;">
+      ${draft.users.length ? draft.users.map(u=>`
+        <span class="rg-chip${roleKeys.has(u.role)?' dim':''}">
+          ${escapeHTML(u.name)}
+          <span class="ref-key">${escapeHTML(u.roleLabel||u.role)}</span>
+          ${roleKeys.has(u.role)?'<span class="pm-tag">already included via role</span>':''}
+          <button class="rg-x" data-rg-drop="${escapeHTML(u.id)}" title="Remove ${escapeHTML(u.name)}">&times;</button>
+        </span>`).join('')
+        : '<span class="pm-note">No individual users in this group — only the roles above.</span>'}
+    </div>
+    <div class="pm-note" style="margin-top:6px;">
+      ${draft.users.length} user${draft.users.length===1?'':'s'} selected${
+        viaRole ? ` — ${viaRole} of them already covered by a role in this group` : ''}.
+    </div>`;
+}
+
 function rgCardHTML(g){
   const open = g.id === rgOpenId;
   return `<div class="pm-group" data-group="${escapeHTML(g.id)}">
@@ -24620,12 +24730,13 @@ function rgCardHTML(g){
       <button class="u-link" data-rg-open="${escapeHTML(g.id)}" style="font:inherit;">${escapeHTML(g.name)}</button>
       <span class="pm-tag">${escapeHTML(g.kindLabel)}</span>
       <span class="pm-tag own">${g.roles.length} role${g.roles.length===1?'':'s'}</span>
+      ${g.users.length?`<span class="pm-tag own">${g.users.length} user${g.users.length===1?'':'s'}</span>`:''}
       <span class="pm-tag role">${g.permissions.length} permission${g.permissions.length===1?'':'s'}</span>
     </h4>
     ${g.description ? `<div class="pm-note">${escapeHTML(g.description)}</div>` : ''}
-    ${!open ? `<div class="pm-note">${g.roles.length
-      ? escapeHTML(g.roles.map(r=>r.label).join(', '))
-      : 'No roles in this group yet — it grants nothing until one joins.'}</div>` : `
+    ${!open ? `<div class="pm-note">${g.roles.length || g.users.length
+      ? escapeHTML([...g.roles.map(r=>r.label), ...g.users.map(u=>u.name)].join(', '))
+      : 'Nobody in this group yet — it grants nothing until a role or a person joins.'}</div>` : `
       <div class="pm-who" style="margin-top:8px;">Editing <b>${escapeHTML(g.name)}</b> · every role below inherits every permission ticked below</div>
       <div class="row2" style="margin-top:8px;">
         <div><label>Name</label><input type="text" id="rg_rename" value="${escapeHTML(g.name)}" maxlength="${rgState.limits.nameMax}"></div>
@@ -24639,7 +24750,12 @@ function rgCardHTML(g){
         <span class="pm-msg" id="rg_meta_msg"></span>
       </div>
 
-      <div class="field-lbl">Roles in this group</div>
+      <div class="field-lbl">Members</div>
+      <div class="pm-note">Two ways to be in a group. A <b>role</b> brings everyone who holds it;
+        a <b>user</b> is one person, whatever their role. Both get exactly the permissions ticked
+        below, on top of what they already have.</div>
+
+      <div class="field-lbl" style="margin-top:10px;">Roles</div>
       <div class="pm-groups" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));">
         ${(rgState.roles||[]).map(r=>`<div class="pm-row ${g.roles.some(x=>x.key===r.key)?'own':''}">
           <input type="checkbox" data-rg-role="${escapeHTML(r.key)}" ${g.roles.some(x=>x.key===r.key)?'checked':''}>
@@ -24648,8 +24764,15 @@ function rgCardHTML(g){
           </div>
         </div>`).join('')}
       </div>
+
+      <div class="field-lbl" style="margin-top:12px;">Users</div>
+      <div class="pm-note">Users get this group's permissions in addition to their role's permissions.</div>
+      <input type="text" id="rg_user_search" placeholder="Search people by name or email…"
+        autocomplete="off" style="margin-top:6px;">
+      <div id="rg_users_block">${rgUsersBlockHTML(g)}</div>
+
       <div class="pm-bar">
-        <button class="btn btn-brand btn-sm" id="rg_save_roles">Save roles</button>
+        <button class="btn btn-brand btn-sm" id="rg_save_members">Save members</button>
         <span class="pm-msg" id="rg_roles_msg"></span>
       </div>
 
@@ -24703,18 +24826,110 @@ function wireRoleGroup(g){
     }catch(err){ say('rg_meta_msg', err.message, 'err'); }
   });
 
-  document.getElementById('rg_save_roles').onclick = guarded('set a role group\'s roles', async ()=>{
+  /* ---------- the Users picker: search, chips, and the save that does both ---------- */
+
+  const usersBlock = document.getElementById('rg_users_block');
+  const redrawUsers = ()=>{
+    if(!usersBlock) return;
+    usersBlock.innerHTML = rgUsersBlockHTML(g);
+    wireUsersBlock();
+  };
+
+  /* Rewired after every redraw, because the buttons are inside the markup that
+     was just replaced. One function, called from both places, so the two
+     cannot drift. */
+  function wireUsersBlock(){
+    usersBlock.querySelectorAll('[data-rg-add]').forEach(b=>b.onclick = ()=>{
+      const draft = rgDraftFor(g);
+      if(!draft.users.some(u=>u.id===b.dataset.rgAdd)){
+        draft.users.push({ id:b.dataset.rgAdd, name:b.dataset.rgName,
+          role:b.dataset.rgRole, roleLabel:b.dataset.rgRolelabel, isActive:true });
+        draft.users.sort((x,y)=>String(x.name).localeCompare(String(y.name)));
+      }
+      say('rg_roles_msg', 'Not saved yet — press Save members.');
+      redrawUsers();
+    });
+    usersBlock.querySelectorAll('[data-rg-drop]').forEach(b=>b.onclick = ()=>{
+      const draft = rgDraftFor(g);
+      draft.users = draft.users.filter(u=>u.id!==b.dataset.rgDrop);
+      say('rg_roles_msg', 'Not saved yet — press Save members.');
+      redrawUsers();
+    });
+  }
+  wireUsersBlock();
+
+  /* THE SEARCH, DEBOUNCED AND SEQUENCED. Debounced because every keystroke
+     would otherwise be a request; sequenced because two in flight can come
+     back out of order and leave the list showing the earlier answer. The token
+     is the guard: a response that is not from the latest request is dropped. */
+  const searchBox = document.getElementById('rg_user_search');
+  if(searchBox){
+    let timer = null;
+    let token = 0;
+    searchBox.addEventListener('input', ()=>{
+      const term = searchBox.value.trim();
+      clearTimeout(timer);
+      if(!term){ rgUserHits = null; rgUserTotal = 0; redrawUsers(); return; }
+      timer = setTimeout(async ()=>{
+        const mine = ++token;
+        try{
+          const res = await api(`/role-groups/users?search=${encodeURIComponent(term)}`);
+          if(mine !== token) return;
+          rgUserHits = res.users || [];
+          rgUserTotal = res.total || 0;
+          redrawUsers();
+        }catch(err){ if(mine === token) say('rg_roles_msg', err.message, 'err'); }
+      }, 200);
+    });
+  }
+
+  /* ONE BUTTON, BOTH LISTS — the brief's "saving applies both".
+   *
+   * TWO REQUESTS, IN ORDER, AND THE SECOND IS NOT SENT IF THE FIRST IS REFUSED.
+   * The routes are separate because each is the whole list for its own kind of
+   * member, which is what lets the server audit exactly what moved. Ordering
+   * roles first matters for the one case the owner can see: adding a role AND a
+   * person who holds it in one save ends with the person correctly marked
+   * "already included via role", because by the time the users route runs the
+   * role is in the group.
+   *
+   * A REFUSAL LEAVES THE CHIPS ALONE so the owner can fix the problem and press
+   * Save again — the draft is only cleared by a save that worked. */
+  document.getElementById('rg_save_members').onclick = guarded('set a role group\'s members', async ()=>{
     const roles = [...card.querySelectorAll('input[data-rg-role]')]
       .filter(b=>b.checked).map(b=>b.dataset.rgRole);
+    const users = rgDraftFor(g).users.map(u=>u.id);
     say('rg_roles_msg', 'Saving…');
+    let rolesRes;
     try{
-      const res = await api(`/role-groups/${encodeURIComponent(g.id)}/roles`,
+      rolesRes = await api(`/role-groups/${encodeURIComponent(g.id)}/roles`,
         { method:'PUT', body:{ roles } });
-      say('rg_roles_msg', res.summary, 'ok');
+    }catch(err){ say('rg_roles_msg', err.message, 'err'); return; }
+    let usersRes;
+    try{
+      usersRes = await api(`/role-groups/${encodeURIComponent(g.id)}/users`,
+        { method:'PUT', body:{ users } });
+    }catch(err){
+      /* The roles went in and the users did not. Said plainly rather than
+         reported as one failure, because half of it landed. */
+      say('rg_roles_msg', `Roles saved. Users were not: ${err.message}`, 'err');
+      rgDraft = null;
       await renderRoleGroups();
-      /* The role screen, if it is showing a role whose inheritance just moved. */
-      if(rpRole && can('settings.permissions')) await showRolePermissions(rpRole.key);
-    }catch(err){ say('rg_roles_msg', err.message, 'err'); }
+      return;
+    }
+    const moved = (rolesRes.added.length + rolesRes.removed.length
+      + usersRes.added.length + usersRes.removed.length);
+    say('rg_roles_msg', moved
+      ? `${rolesRes.added.length + rolesRes.removed.length} role change(s), `
+        + `${usersRes.added.length} user(s) added, ${usersRes.removed.length} removed `
+        + '— in effect on their next request.'
+      : 'No changes.', 'ok');
+    rgDraft = null;      // saved: the server's list is the truth again
+    rgUserHits = null;
+    rgUserTotal = 0;
+    await renderRoleGroups();
+    /* The role screen, if it is showing a role whose inheritance just moved. */
+    if(rpRole && can('settings.permissions')) await showRolePermissions(rpRole.key);
   });
 
   document.getElementById('rg_save_perms').onclick = guarded('set a role group\'s permissions', async ()=>{
@@ -26069,6 +26284,10 @@ const NOTIF_TITLES = {
   project_review_changes:  'Changes requested',
   project_review_approved: 'Project approved',
   password_reset: 'Your password was reset',
+  /* Not about work either: somebody's access changed. The title says what
+     happened and the sentence underneath names the group — no key names, by
+     design; see KINDS.role_group in src/notifications.js. */
+  role_group: 'You were added to a role group',
   work_paused: 'Timer paused — outside working hours',
   work_resumed: 'Timer resumed — the working day has started',
   /* Work coming BACK, which is neither of the two above it: `assigned` is work

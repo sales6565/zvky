@@ -664,6 +664,52 @@ async function ensureRoleGroupTables(db, log) {
       CONSTRAINT fk_rgm_group FOREIGN KEY (group_id) REFERENCES role_groups(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
 
+  /* THE USERS IN A GROUP, beside the roles — Prompt 73.
+   *
+   * ADDITIVE IN EVERY SENSE. A new table, seeded with nothing, so an install
+   * that upgrades and never opens the screen has one more empty table and
+   * identical access for everybody. A group with no direct members resolves
+   * exactly as it did before this existed.
+   *
+   * TWO FOREIGN KEYS, AND THEY ARE THE CLEAN-UP — the same property the three
+   * tables around this one rely on. Deleting a group takes its direct members
+   * with it; deleting a USER takes their memberships with it, which is what
+   * makes "a deleted user leaves no rows" true of the schema rather than of
+   * some route remembering to tidy up. DELETE FROM users is how an account is
+   * removed in src/routes/users.js and it names no other table.
+   *
+   * THERE IS A FOREIGN KEY HERE AND NOT ON role_key, and the asymmetry is the
+   * point rather than an inconsistency: a designation lives in reference data
+   * loaded into memory and has no table to point at, which is why forgetRole()
+   * exists. A user is a row. A row can be pointed at.
+   *
+   * DEACTIVATION IS NOT DELETION, so nothing here reacts to it: the row stays
+   * and the resolution query is what declines to apply a group to an inactive
+   * account — see grantsForUser() in src/role-groups.js. Reactivating gives it
+   * back, with no membership to restore by hand.
+   *
+   * added_by_email, not added_by: it is the brief's "who added them" under the
+   * name both sibling tables already use for that fact, and an email outlives
+   * the adder's account where a foreign-keyed id would cascade away with it.
+   */
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS role_group_users (
+      group_id       CHAR(36)     NOT NULL,
+      user_id        CHAR(36)     NOT NULL,
+      added_by_email VARCHAR(191) NULL,
+      added_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      /* THE UNIQUE PAIR IS THE PRIMARY KEY, as it is on both sibling tables. A
+         separate UNIQUE KEY over the same two columns would be a second index
+         on the same thing — so "one row per (group, user)" is enforced here,
+         and INSERT IGNORE against it is what makes adding somebody twice a
+         no-op rather than an error. */
+      PRIMARY KEY (group_id, user_id),
+      /* The other direction: "which groups is this person in", which the user
+         detail panel and the resolution query both ask. */
+      KEY idx_role_group_users_user (user_id),
+      CONSTRAINT fk_rgu_group FOREIGN KEY (group_id) REFERENCES role_groups(id) ON DELETE CASCADE,
+      CONSTRAINT fk_rgu_user  FOREIGN KEY (user_id)  REFERENCES users(id)       ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS role_group_permissions (
       group_id       CHAR(36)     NOT NULL,
       permission_key VARCHAR(64)  NOT NULL,

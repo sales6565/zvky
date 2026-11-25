@@ -97,6 +97,25 @@ const KINDS = {
      as the bell keeps it. The value goes to the person who did the reset, in
      that response, once. */
   password_reset: 'password_reset',
+  /* SOMEBODY WAS PUT IN A ROLE GROUP — Prompt 73. Raised for the person added,
+     never for the administrator who added them (raise() drops a notice whose
+     recipient is its actor, so an administrator adding themselves is told
+     nothing, which is right: they know).
+
+     WHAT IS DELIBERATELY NOT IN IT: the permissions. The group's NAME is the
+     whole of the message, carried in `detail` like the other kinds whose
+     sentence is written when they are raised. A notice listing keys would be a
+     map of this person's new reach sitting in a table that is read back by an
+     API and rendered in a panel — and the person reading it cannot act on a
+     key name anyway. "You were added to Release Managers" is what they need;
+     what the group grants is the group screen's to show, to somebody who holds
+     the key for it.
+
+     NOTHING IS RAISED ON REMOVAL. Being quietly given more is a surprise worth
+     a notice; having something taken back is not an action for the person it
+     was taken from, and a studio that reorganises its groups would otherwise
+     spray "you were removed from" at everybody. The audit row records it. */
+  role_group: 'role_group',
   /* The studio closed with this person's timer still running, so it was put
      down for them at the cutoff.
      
@@ -276,6 +295,13 @@ function describe(row) {
        would read as "Priya mentioned you in Priya". */
     const where = row.conversation_title ? ` in ${row.conversation_title}` : '';
     return `${who} mentioned you${where}.`;
+  }
+  if (row.kind === KINDS.role_group) {
+    /* The stored sentence, with a fall-back that is true without naming the
+       group — a row written before `detail` existed must still read as
+       something, and inventing a group name would be worse than being vague. */
+    return row.detail || 'You were added to a role group, which may give you access to more '
+      + 'of Forge than before.';
   }
   if (row.kind === KINDS.password_reset) {
     const who = row.other_name || 'An administrator';
@@ -742,6 +768,24 @@ async function markAllRead(db, userId) {
  * one the recipient cannot tell from a compromise. Also as `actorId`, which is
  * what stops it being raised at all if somebody ever routes a self-reset
  * through here: raise() drops a notification whose recipient is its actor. */
+/* "You were added to <group>", and nothing more than that.
+ *
+ * The sentence is composed HERE rather than at the call site, so there is one
+ * wording and one place that decides what is in it. The group name is escaped
+ * by the page on render like every other stored sentence; it is bounded at
+ * creation (NAME_MAX is 80) and raise() slices `detail` to the column width.
+ */
+async function addedToRoleGroup(db, { userId, byId, groupName }) {
+  return raise(db, {
+    recipientId: userId,
+    actorId: byId || null,
+    kind: KINDS.role_group,
+    otherUserId: byId || null,
+    detail: `You were added to ${groupName || 'a role group'}. It may give you access to more of `
+      + 'Forge than your role alone — look for new tabs or buttons.',
+  });
+}
+
 async function passwordReset(db, { userId, byId }) {
   return raise(db, {
     recipientId: userId,
@@ -753,6 +797,7 @@ async function passwordReset(db, { userId, byId }) {
 
 module.exports = {
   passwordReset,
+  addedToRoleGroup,
   projectReviewRequested,
   projectReviewAnswered,
   KINDS, describe, raise, assignmentChanged, taskSubmitted, changesRequested, chatMention,

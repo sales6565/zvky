@@ -1,10 +1,22 @@
 #!/usr/bin/env node
-/* WHAT ONE ROLE MAY DO TO A PROJECT, AND WHY.
+/* WHAT ONE ROLE — OR ONE PERSON — MAY DO TO A PROJECT, AND WHY.
  *
  *   node scripts/role-can.js producer
  *   node scripts/role-can.js "Senior Producer"
  *   node scripts/role-can.js producer --json
  *   node scripts/role-can.js --roles            (just list the role keys)
+ *   node scripts/role-can.js --user ana@studio.test      (one account)
+ *   node scripts/role-can.js --user "Ana Ruiz" --json
+ *
+ * A ROLE OR A PERSON, and from Prompt 73 the difference matters: role groups can
+ * now name individual users, so two people holding the same designation can hold
+ * different permissions. Asked about a ROLE this prints what the designation
+ * carries; asked about a PERSON it prints what that account actually holds, and
+ * every key says which of the three sources it came from:
+ *
+ *   the role            role_permissions, or the catalogue default
+ *   group via role      a group this person's designation is in
+ *   group (direct)      a group this person was added to by name
  *
  * ===========================================================================
  * WHY IT EXISTS. An owner switched Project Edit on for a designation, the
@@ -85,13 +97,43 @@ async function main(opts = {}) {
     return rows;
   };
 
-  /* THE ROLE. Named by key ("senior_producer") or by label ("Senior Producer"),
-     because the person running this has just read one off the Settings screen
-     and should not have to know which of the two it was. */
+  /* THE SUBJECT. One account with --user, otherwise a role.
+   *
+   * ONE ACCOUNT, FOUND THE WAY A HUMAN NAMES THEM — an id, an email, or the
+   * name they go by. Ambiguity is reported rather than guessed at: picking one
+   * of two people called Sam is how a diagnostic tells somebody the wrong
+   * thing with confidence. */
+  const userIdx = argv.indexOf('--user');
+  const userTerm = userIdx === -1 ? null : (argv[userIdx + 1] || '');
   const all = entries();
   const match = (r) => r.key === wanted
     || String(r.key).toLowerCase() === String(wanted).toLowerCase()
     || String(r.label || '').toLowerCase() === String(wanted).toLowerCase();
+
+  if (userIdx !== -1) {
+    if (!userTerm || userTerm.startsWith('--')) {
+      write('Name the account: --user <id, email or name>\n');
+      return { error: 'no user named' };
+    }
+    const found = await q(
+      `SELECT id, \`name\`, email, \`role\`, is_active FROM users
+        WHERE id = $1 OR email = $1 OR \`name\` = $1
+           OR LOWER(\`name\`) LIKE CONCAT('%', LOWER($1), '%')
+        ORDER BY (id = $1) DESC, (email = $1) DESC, (\`name\` = $1) DESC, \`name\`
+        LIMIT 10`, [userTerm]);
+    if (!found.length) {
+      write(`No account matches ${JSON.stringify(userTerm)}.\n`);
+      return { error: 'unknown user', user: userTerm };
+    }
+    const exact = found.find((u) => u.id === userTerm || u.email === userTerm || u.name === userTerm);
+    if (found.length > 1 && !exact) {
+      write(`${found.length} accounts match ${JSON.stringify(userTerm)}:\n`
+        + found.map((u) => `  ${u.name} <${u.email}>  ${u.id}\n`).join('')
+        + 'Name one exactly, or pass the id.\n');
+      return { error: 'ambiguous user', matches: found.map((u) => u.id) };
+    }
+    return describe(exact || found[0]);
+  }
 
   if (!wanted || argv.includes('--roles')) {
     const out = all.map((r) => `  ${String(r.key).padEnd(44)} ${r.label || ''}`);
@@ -103,6 +145,27 @@ async function main(opts = {}) {
     write(`No role called "${wanted}". Run with --roles to list them.\n`);
     return { error: 'unknown role', role: wanted };
   }
+  return reportFor(role, null);
+
+  /* ======================================================================= */
+
+  /* ONE ACCOUNT. Its designation decides most of the answer, so this hands the
+     role straight to the same reporting function with the person attached —
+     there is no second report, only a third source of keys. */
+  async function describe(user) {
+    const theirRole = all.find((r) => r.key === user.role);
+    if (!theirRole) {
+      write(`${user.name} holds the role "${user.role}", which is not in this install's `
+        + 'catalogue. Reassign the account, or run with --roles to see what exists.\n');
+      return { error: 'unknown role', role: user.role, user: user.id };
+    }
+    return reportFor(theirRole, user);
+  }
+
+  /* EVERYTHING BELOW WAS THE BODY OF main(), unchanged in what it computes. The
+     one difference is `user`: null for a role, an account for a person, and it
+     adds the third source to sourceOf() below. */
+  async function reportFor(role, user) {
   const def = roleDef(role.key);
 
   /* THE EFFECTIVE SET, REBUILT FROM READS. Three sources, in the order
@@ -134,10 +197,46 @@ async function main(opts = {}) {
     if (!/doesn't exist|Unknown column|ER_NO_SUCH_TABLE/i.test(err.sqlMessage || err.message || '')) throw err;
   }
 
+  /* THE THIRD SOURCE — Prompt 73: groups this PERSON was added to by name.
+   *
+   * Asked only when there is a person to ask about, so the role report costs
+   * exactly what it cost before. The is_active = 1 join mirrors
+   * grantsForUser() in src/role-groups.js, which is what the application
+   * resolves by: a deactivated account holds nothing from a group, and a
+   * diagnostic that said otherwise would send somebody looking for a bug that
+   * is not there. */
+  const direct = new Map();
+  if (user) {
+    try {
+      for (const row of await q(
+        `SELECT DISTINCT g.\`name\`, gp.permission_key
+           FROM role_group_users gu
+           JOIN users u ON u.id = gu.user_id AND u.is_active = 1
+           JOIN role_groups g ON g.id = gu.group_id
+           JOIN role_group_permissions gp ON gp.group_id = gu.group_id
+          WHERE gu.user_id = $1`, [user.id]
+      )) {
+        if (!direct.has(row.permission_key)) direct.set(row.permission_key, []);
+        direct.get(row.permission_key).push(row.name);
+      }
+    } catch (err) {
+      if (!/doesn't exist|Unknown column|ER_NO_SUCH_TABLE/i.test(err.sqlMessage || err.message || '')) throw err;
+    }
+  }
+
   const sourceOf = (key) => {
     if (superAdmin) return 'super admin (the whole catalogue, always)';
     if (stored.get(key) === true) return 'the role';
-    if (groups.has(key)) return `group: ${groups.get(key).join(', ')}`;
+    /* THE ORDER IS THE ORDER effectiveFor() APPLIES THEM, and it decides which
+       source is REPORTED for a key that has more than one. The role first
+       because it is the thing an administrator would change; then the group
+       the designation is in, which affects everybody holding it; then the
+       direct membership, which affects one account. A key held two ways is one
+       permission — the union is a Set — and this names the broadest reason it
+       is held, so "take them out of the group" is never offered as a fix for
+       something their role grants anyway. */
+    if (groups.has(key)) return `group via role: ${groups.get(key).join(', ')}`;
+    if (direct.has(key)) return `group (direct): ${direct.get(key).join(', ')}`;
     /* NO STORED ROW AT ALL means the key was added to the catalogue after this
        role was last written. The application fills that gap with the key's
        DEFAULT the next time it is asked (topUpRole), so that is what it
@@ -175,6 +274,15 @@ async function main(opts = {}) {
     projectScope: def.projectScope,
     scopeMeans: SCOPE_MEANS[def.projectScope] || null,
     superAdmin,
+    /* The account this is about, when it is about one. Null for a role, so the
+       JSON shape of a role report is what it was before --user existed. */
+    user: user ? { id: user.id, name: user.name, email: user.email,
+      isActive: user.is_active !== 0 } : null,
+    /* Which groups named this PERSON, listed once rather than per key — the
+       question "why does this account hold more than its role" wants the group
+       names, and counting them out of `effective` is work the reader should
+       not have to do. */
+    directGroups: [...new Set([...direct.values()].flat())].sort(),
     effective: [...held].map((k) => ({ key: k, source: sourceOf(k) })),
     controls,
   };
@@ -182,6 +290,14 @@ async function main(opts = {}) {
   if (asJson) { write(`${JSON.stringify(report, null, 2)}\n`); return report; }
 
   const out = [];
+  if (user) {
+    out.push(`account        ${user.name} <${user.email}>`
+      + `${user.is_active === 0 ? '   (DEACTIVATED — a group grants it nothing)' : ''}`);
+    out.push(`               id ${user.id}`);
+    out.push(`in groups      ${report.directGroups.length
+      ? report.directGroups.join(', ')
+      : '(none directly — everything below comes from the designation)'}`);
+  }
   out.push(`role           ${role.key}${role.label ? `  (${role.label})` : ''}`);
   out.push(`tier           ${def.tier || '(none)'}`);
   out.push(`project scope  ${def.projectScope}  — ${report.scopeMeans}`);
@@ -199,6 +315,7 @@ async function main(opts = {}) {
   for (const e of report.effective) out.push(`  ${e.key.padEnd(34)} ${e.source}`);
   write(`${out.join('\n')}\n`);
   return report;
+  }
 }
 
 if (require.main === module) {

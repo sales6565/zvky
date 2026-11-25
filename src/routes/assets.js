@@ -2931,7 +2931,11 @@ router.get('/:id/hold-explain', requirePermission('asset.hold'), async (req, res
     if (!users[0]) return res.status(404).json({ error: 'No such user' });
     subject = {
       ...users[0],
-      permissions: [...await rolePermissions.effectiveFor(db, users[0].role)],
+      /* Everything that account holds, including any group it is in directly —
+         the same three sources authenticate() resolves, so this diagnostic
+         answers for the real person rather than for an average holder of their
+         designation. */
+      permissions: [...await rolePermissions.effectiveFor(db, users[0].role, users[0].id)],
     };
   }
 

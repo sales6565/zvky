@@ -20,6 +20,7 @@ const multer = require('multer');
 const avatar = require('../avatar');
 const { visibleProjects, hasFullAccess, mayAdministerUser, holds } = require('../permissions');
 const rolePermissions = require('../role-permissions');
+const roleGroups = require('../role-groups');
 const notifications = require('../notifications');
 const deactivation = require('../user-deactivation');
 
@@ -812,9 +813,15 @@ router.post('/:id/reset-password', requirePermission('user.reset_password'), asy
     return res.status(403).json({ error: 'You do not have permission to do that' });
   }
 
-  /* The escalation guard. Asked of the TARGET's role rather than of the target
-     as an individual, which is where this permission set comes from. */
-  const theirs = await rolePermissions.effectiveFor(db, target.role).catch(() => new Set());
+  /* The escalation guard, asked of everything the TARGET holds: their role,
+     their role's groups, and any group they were added to individually.
+
+     The last of those cannot currently carry this key — settings.permissions is
+     in role-groups' NEVER_GRANTABLE list, so no group may grant it — but asking
+     the complete question costs one read and means this guard does not quietly
+     become wrong if that list ever changes. */
+  const theirs = await rolePermissions.effectiveFor(db, target.role, target.id)
+    .catch(() => new Set());
   if (theirs.has('settings.permissions') && !can(req, 'settings.permissions')) {
     return res.status(403).json({
       error: `${target.name} can change who may do what, so only somebody who can do the same may `
@@ -1182,7 +1189,28 @@ router.post('/bulk', requirePermission('user.bulk_upload'), uploadImport.single(
 router.get('/:id', requirePermission('user.view'), async (req, res) => {
   const { rows } = await db.query(`SELECT ${USER_COLUMNS} FROM users u WHERE u.id = $1`, [req.params.id]);
   if (!rows.length) return res.status(404).json({ error: 'User not found' });
-  res.json({ user: await describeUser(rows[0]) });
+  /* ALSO IN GROUPS — Prompt 73, and read-only in every sense.
+   *
+   * Names of the groups this account was added to as an individual, so the
+   * detail panel can say where permissions beyond their designation's are
+   * coming from. Not the groups their ROLE is in: those belong to the
+   * designation and are shown on the role screen, and mixing the two here
+   * would read as "this person was singled out" when they were not.
+   *
+   * NO PERMISSION KEYS, deliberately. This panel is behind user.view, which is
+   * the staff directory's key and not settings.role_groups — so it may say
+   * that a membership exists without listing what it grants. Somebody who
+   * needs that opens the group screen, with the key for it.
+   *
+   * FAILS QUIET: an install whose migration has not run has no table, and a
+   * missing extra line is worth more than a 500 on the user panel. */
+  let groups = [];
+  try {
+    groups = await roleGroups.groupsForUser(db, rows[0].id);
+  } catch (err) {
+    console.warn(`[users] group membership unavailable for ${rows[0].id}: ${err.message}`);
+  }
+  res.json({ user: { ...await describeUser(rows[0]), groups } });
 });
 
 // GET /api/users/:id/manager-options — who this person could report to.

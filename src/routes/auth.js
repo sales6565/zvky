@@ -124,7 +124,8 @@ router.post('/login', async (req, res) => {
     // meant a screen asking "may I show this?" got `undefined` for the whole
     // session, so a permission switched on for the role was invisible until the
     // person happened to refresh and pick it up from /auth/me.
-    user.permissions = [...await rolePermissions.effectiveFor(db, user.role).catch(() => new Set())];
+    user.permissions = [...await rolePermissions.effectiveFor(db, user.role, user.id)
+      .catch(() => new Set())];
 
     /* Sign-in is the one action whose actor the middleware cannot work out for
        itself: there is no req.user on the way in, because authenticating is

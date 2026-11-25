@@ -208,10 +208,26 @@ async function ownFor(db, roleKey) {
 
 /* THE PERMISSION SET TO JUDGE A REQUEST BY: the role's own, plus every group's.
  *
+ * THREE SOURCES SINCE PROMPT 73, and the third is why this takes a user id:
+ *
+ *   the role's own rows            role_permissions, via ownFor()
+ *   groups the ROLE is in          everyone holding the designation gets these
+ *   groups the PERSON is in        that one account, whatever their role
+ *
+ * THE USER ID IS OPTIONAL, and that is the whole of the compatibility story.
+ * Called with two arguments this answers exactly what it answered before — the
+ * question "what does this designation hold" — which is what the half-dozen
+ * callers asking about a ROLE rather than a person still want. Called with
+ * three it answers "what may this person do", which is what the request path
+ * asks. One function, one union, no second resolution path; the difference
+ * between the two questions is an argument rather than another code path.
+ *
  * ADDITIVE, AND ONLY ADDITIVE. A group grant is added; nothing a group says can
  * remove a permission the role holds, because a group has no way to say "not
- * this". The union is in this one place, so there is no second answer anywhere
- * in the application to what somebody may do.
+ * this". Direct membership changes none of that: it is another source of
+ * additions, so a person in a group can only ever hold MORE than their role,
+ * never less. The union is in this one place, so there is no second answer
+ * anywhere in the application to what somebody may do.
  *
  * AN EXPLICIT enabled = 0 DOES NOT BLOCK A GROUP GRANT, and that is a decision
  * rather than an oversight — the long note at the top of src/role-groups.js
@@ -231,16 +247,39 @@ async function ownFor(db, roleKey) {
  * everybody's own permissions down with it — authenticate() would then read an
  * empty set and refuse the whole studio.
  */
-async function effectiveFor(db, roleKey) {
+async function effectiveFor(db, roleKey, userId = null) {
   if (isSuperAdmin(roleKey)) return new Set(catalog.KEYS);
 
   const own = await ownFor(db, roleKey);
-  const inherited = await roleGroups.grantsForRole(db, roleKey).catch((err) => {
+  const noGroups = (err) => {
     if (!missingTable(err)) throw err;
     return new Set();
-  });
-  if (!inherited.size) return own;
-  for (const key of inherited) own.add(key);
+  };
+  /* THE TWO GROUP READS, UNIONED HERE AND NOWHERE ELSE.
+   *
+   * grantsForRole  the groups this DESIGNATION is in — every holder of the role
+   * grantsForUser  the groups this PERSON was added to — Prompt 73
+   *
+   * Both are Sets of keys and both are added to the role's own Set, so a key
+   * reachable by two routes at once is one entry: duplicates cannot exist in the
+   * answer, whatever the rows say. That is why this is a union of Sets rather
+   * than a concatenation of lists — the "counted once" requirement is a
+   * property of the data structure, not of a de-duplicating step somebody
+   * could forget.
+   *
+   * THE SECOND READ IS SKIPPED ENTIRELY WITHOUT A USER, which keeps every
+   * caller that is asking about a ROLE costing exactly what it cost before:
+   * the chat audience, the TL-review roster, the timesheet-option roster and
+   * the role editor all ask "what does this designation hold", and a per-user
+   * read would be both wrong and wasteful there. */
+  const viaRole = await roleGroups.grantsForRole(db, roleKey).catch(noGroups);
+  const direct = userId
+    ? await roleGroups.grantsForUser(db, userId).catch(noGroups)
+    : new Set();
+
+  if (!viaRole.size && !direct.size) return own;
+  for (const key of viaRole) own.add(key);
+  for (const key of direct) own.add(key);
   return own;
 }
 
