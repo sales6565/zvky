@@ -6,7 +6,7 @@
 # A deliberate change to anybody's visibility is made by regenerating this
 # file, so it lands in the diff where a reviewer will see it.
 #
-# roles: 60   routes: 306
+# roles: 60   routes: 309
 
 ## PAGE ELEMENTS  (UI_GATES, read from public/index.html)
 
@@ -290,6 +290,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = yes
   PUT /api/role-groups/:id/roles = yes
+  PUT /api/role-groups/:id/users = yes
   PUT /api/theme = yes
 
 ## ROLE admin
@@ -519,6 +520,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE coordinator
@@ -748,6 +750,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE art_director
@@ -977,6 +980,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE creative_art_director
@@ -1206,6 +1210,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE associate_art_director
@@ -1435,6 +1440,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE art_supervisor
@@ -1664,6 +1670,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE associate_animation_supervisor
@@ -1893,6 +1900,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE senior_team_lead
@@ -2122,6 +2130,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE team_lead
@@ -2351,6 +2360,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE associate_team_lead
@@ -2580,6 +2590,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE technical_manager
@@ -2809,6 +2820,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE senior_game_artist
@@ -3038,6 +3050,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE game_artist
@@ -3267,6 +3280,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE associate_game_artist
@@ -3496,6 +3510,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE trainee_game_artist
@@ -3725,6 +3740,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE senior_motion_graphics_artist
@@ -3954,6 +3970,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE senior_game_animator
@@ -4183,6 +4200,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE game_animator
@@ -4412,6 +4430,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE associate_game_animator
@@ -4641,6 +4660,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE trainee_game_animator
@@ -4870,6 +4890,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE game_designer
@@ -5099,6 +5120,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE senior_ui_ux_designer
@@ -5328,6 +5350,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE associate_ui_ux_designer
@@ -5557,6 +5580,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE associate_game_designer
@@ -5786,6 +5810,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE consultant_lead_game_designer
@@ -6015,6 +6040,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE head_of_production
@@ -6244,6 +6270,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE cto
@@ -6473,6 +6500,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE general_manager
@@ -6702,6 +6730,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE managing_director_ceo
@@ -6931,6 +6960,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE vice_president_global_operations_business_development
@@ -7160,6 +7190,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE senior_producer
@@ -7389,6 +7420,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE producer
@@ -7618,6 +7650,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE creative_producer
@@ -7847,6 +7880,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE senior_project_manager
@@ -8076,6 +8110,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE project_manager
@@ -8305,6 +8340,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE associate_project_manager
@@ -8534,6 +8570,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE senior_production_coordinator
@@ -8763,6 +8800,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE senior_technical_artist
@@ -8992,6 +9030,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE technical_artist
@@ -9221,6 +9260,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE associate_technical_artist
@@ -9450,6 +9490,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE senior_unity_developer
@@ -9679,6 +9720,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE unity_developer
@@ -9908,6 +9950,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE associate_unity_developer
@@ -10137,6 +10180,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE game_developer
@@ -10366,6 +10410,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE associate_game_developer
@@ -10595,6 +10640,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE test_engineer
@@ -10824,6 +10870,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE associate_test_engineer
@@ -11053,6 +11100,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE trainee_test_engineer
@@ -11282,6 +11330,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE game_mathematician
@@ -11511,6 +11560,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE associate_game_mathematician
@@ -11740,6 +11790,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE associate_math_analyst
@@ -11969,6 +12020,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE senior_business_development_executive
@@ -12198,6 +12250,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE senior_operations_financial_analyst
@@ -12427,6 +12480,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE account_manager_marketing
@@ -12656,6 +12710,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE mis_analyst
@@ -12885,6 +12940,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE junior_accountant
@@ -13114,6 +13170,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE people_culture_partner
@@ -13343,6 +13400,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE assistant_manager_hr_generalist
@@ -13572,6 +13630,7 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 
 ## ROLE talent_acquisition_specialist
@@ -13801,5 +13860,6 @@ write routes:
   PUT /api/pnl/role-rates/:roleKey = conditional
   PUT /api/role-groups/:id/permissions = no
   PUT /api/role-groups/:id/roles = no
+  PUT /api/role-groups/:id/users = no
   PUT /api/theme = no
 

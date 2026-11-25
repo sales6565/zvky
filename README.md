@@ -99,17 +99,59 @@ role takes effect the same way.
 
 ### Role groups: an additive layer
 
-**Settings → Role Groups** makes a named bag of permissions and puts roles in it.
-Every member role inherits the bag. A role's effective permissions are **its own
-plus the grants of every group it is in** — the union, computed in one place,
+**Settings → Role Groups** makes a named bag of permissions and puts **roles and
+people** in it. Somebody's effective permissions are **their role's own, plus the
+grants of every group their role is in, plus the grants of every group they were
+added to by name** — the union, computed in one place,
 [`effectiveFor()`](src/role-permissions.js).
 
 | | |
 | --- | --- |
 | **Groups only grant** | There is no group-level deny. A permission a group does not grant is one it has no opinion about, so nothing is ever *reduced* by a group — including Super Admin, which short-circuits above the group query and always holds the whole catalogue |
-| **No nesting** | A group contains roles, never groups. One hop, so the answer is a single join and cannot cycle |
-| **No capabilities** | Groups grant catalogue keys. `projectScope`, `reviewStage` and `deleteAsset` are values rather than booleans and stay with the tier |
+| **Roles or people** | A role brings everyone who holds it; a user is one account, whatever their designation. Use the second for "give Ana the release screens" without inventing a Release Manager designation for one person |
+| **No nesting** | A group contains roles and users, never groups. One hop, so the answer is two joins and cannot cycle |
+| **No capabilities** | Groups grant catalogue keys. `projectScope`, `reviewStage` and `deleteAsset` are values rather than booleans and stay with the tier — so direct membership cannot change how much of the studio somebody sees, only what they may do |
 | **Three kinds** | `department`, `level`, `custom` — a fixed vocabulary, because a free-text field becomes all three plus typos |
+
+#### Putting one person in a group
+
+The group editor's **Members** section has two halves. **Roles** is a grid of
+checkboxes. **Users** is a search box and a row of chips: type a name or an email,
+click a result, press **Save members**. Somebody whose designation is in the group
+*as well* is marked **already included via role** — their direct row grants them
+nothing extra today, and is kept rather than refused because it keeps granting if
+the role is later taken out of the group.
+
+| | |
+| --- | --- |
+| **Active accounts only** | A deactivated account is refused with the reason. It would be a row that does nothing: the resolution query will not apply a group to an inactive account |
+| **Deactivating keeps the row** | The membership survives and stops granting; reactivating gives it back with nothing to restore by hand — the same thing that happens to a role |
+| **Deleting the account removes it** | A foreign key, so it is a property of the schema rather than of a route remembering to tidy up |
+| **Counted once** | Somebody covered through their role *and* directly holds each key once. The union is of `Set`s, so duplicates cannot exist in the answer whatever the rows say |
+| **They are told** | An in-app notice naming the group — never its permissions. The person reading it cannot act on a key name, and a notice listing them would be a map of somebody's new reach sitting in a table that an API reads back |
+| **Nothing on removal** | Being quietly given more is a surprise worth a notice; having it taken back is not an action for the person it was taken from. The audit row records it either way |
+
+**Handing a group to anybody needs every key in it.** The escalation rule used to
+sit only on the permissions side — you cannot *put* a key in a group you do not
+hold — which left a door: a group's keys were vetted against whoever added them,
+never against whoever later attached a role to it. So an editor holding the group
+screen and nothing else could attach a designation to a group granting
+`asset.delete` and hand out a permission they could not have granted on the role
+screen. One function, [`mayHandOut()`](src/role-groups.js), now guards both halves
+of Members, which is what makes "the rule for a user is the rule for a role" true
+of the code rather than of two paragraphs that agree today.
+
+Asking what one *person* holds, and why each key:
+
+```
+node scripts/role-can.js --user ana@studio.test
+```
+
+Every key is printed with its source — `the role`, `group via role: <name>` or
+`group (direct): <name>` — in the order `effectiveFor()` applies them, so "take
+them out of the group" is never offered as a fix for something their role grants
+anyway. Read-only: every statement goes through a guard that refuses anything but
+a read, and a test asserts no row count changes.
 
 **Nothing changed when this shipped, and that is asserted rather than asserted-ish.**
 `effectiveFor()` was recorded for all sixty designations *before* the feature was
@@ -117,7 +159,10 @@ written — `tests/fixtures/role-permissions-before-groups.json`, taken through 
 real seeding path against a fresh schema — and the first test in
 `tests/role-groups.test.js` demands it back key for key. The migration seeds no
 groups at all, so an install that upgrades and never opens the screen has three
-empty tables and identical access. The one permitted difference is the new
+empty tables — four, since users can be members — and identical access. The same
+promise was checked again when direct membership arrived: the only line
+`docs/permission-snapshot.txt` gained was the new write route, for all sixty
+designations, and not one existing verdict moved. The one permitted difference is the new
 management key, and it is pinned too: `settings.role_groups` reaches Super Admin
 and nobody else.
 
