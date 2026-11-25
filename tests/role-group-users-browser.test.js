@@ -150,11 +150,23 @@ test('role group members, in Chrome', { skip: SKIP }, async (t) => {
     await ownerPage.waitForSelector(`[data-rg-open="${id.group}"]`, { state: 'visible', timeout: 45000 });
 
     const open = await ownerPage.$(`[data-group="${id.group}"] #rg_user_search`);
-    if (!open) {
-      await ownerPage.click(`[data-rg-open="${id.group}"]`);
-      await ownerPage.waitForSelector('#rg_user_search', { timeout: 45000 });
-    }
+    if (!open) await ownerPage.click(`[data-rg-open="${id.group}"]`);
+
+    /* AND WAIT FOR THE PICKER ITSELF, always — not only after a click.
+
+       Clicking the Settings tab re-renders the whole view, so an expanded card
+       can be in the DOM from the previous render while the replacement is still
+       being built. Reading the chips in that window found none, and the
+       assertion blamed the save. Waiting on the element the editor is actually
+       made of is the fix; it is also what the caller wants in both branches. */
+    await ownerPage.waitForSelector(`[data-group="${id.group}"] #rg_user_search`,
+      { state: 'visible', timeout: 45000 });
   };
+
+  /* The chips, once there are the number expected — for the same reason: a count
+     read during a re-render is a count of the wrong DOM. */
+  const waitForChips = (n) => ownerPage.waitForFunction(
+    (want) => document.querySelectorAll('.rg-chip').length === want, n, { timeout: 45000 });
 
   const chips = () => ownerPage.$$eval('.rg-chip', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
 
@@ -171,6 +183,7 @@ test('role group members, in Chrome', { skip: SKIP }, async (t) => {
 
   await t.test('the editor searches, chips what it finds, and counts it', async () => {
     await openEditor();
+    await waitForChips(0);
     assert.deepStrictEqual(await chips(), [], 'no users in the group yet');
 
     await ownerPage.fill('#rg_user_search', 'Ana');
@@ -289,6 +302,7 @@ test('role group members, in Chrome', { skip: SKIP }, async (t) => {
 
   await t.test('removing one takes the control away again, on its own', async () => {
     await openEditor();
+    await waitForChips(2);
     assert.strictEqual((await chips()).length, 2, 'both chips are there after the card redrew');
 
     /* HER OWN CHIP'S REMOVE BUTTON, BY THE ID IT CARRIES. The first version of
@@ -301,8 +315,12 @@ test('role group members, in Chrome', { skip: SKIP }, async (t) => {
     assert.strictEqual(left.length, 1, "and Ben's is not");
 
     await ownerPage.click('#rg_save_members');
+    /* THE TOAST AGAIN. This wait was on the line under the button, which the
+       redraw erases — so it timed out forty-five seconds after a removal that
+       had already worked. The evidence was test 8 passing: it found Ana no
+       longer in the group, which only the save could have done. */
     await ownerPage.waitForFunction(
-      'document.getElementById("rg_roles_msg") && /removed/.test(document.getElementById("rg_roles_msg").textContent)',
+      'document.getElementById("toast") && /1 removed/.test(document.getElementById("toast").textContent)',
       null, { timeout: 45000 });
 
     const markAt = Date.now();
