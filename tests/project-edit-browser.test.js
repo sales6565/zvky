@@ -246,8 +246,27 @@ test('the permission poll rides the interval that was already there', () => {
      because a setInterval added next to this one would pass every behavioural
      test in this file. */
   const intervals = PAGE.match(/setInterval\(/g) || [];
-  assert.ok(intervals.length <= 4,
+  /* FIVE, AND THE FIFTH HAD TO ARGUE FOR ITSELF.
+   *
+   * This was four for a long time, and the number is the point: a page that
+   * acquires a standing poll per feature ends up asking the server a dozen
+   * questions a minute on behalf of a screen nobody is looking at.
+   *
+   * The fifth is Settings → Backup's progress poll, and it is admitted because
+   * it is not a standing poll. It is created only while a backup is actually
+   * running and cleared the moment one is not — the two assertions below are
+   * what hold it to that, and they are the reason this cap moved rather than
+   * being deleted. A sixth needs the same argument made in the same place. */
+  assert.ok(intervals.length <= 5,
     `public/index.html has ${intervals.length} intervals; a new polling loop has been added`);
+
+  const started = PAGE.slice(PAGE.indexOf('function bkSchedulePoll()'),
+    PAGE.indexOf('function wireBackupSettings()'));
+  assert.ok(started.length > 200, 'found the backup poll');
+  assert.match(started, /const should = Boolean\(bkState\.data && bkState\.data\.running\);[\s\S]*?if\(!should\)\{[\s\S]*?clearInterval/,
+    'the backup poll must be cleared whenever nothing is running');
+  assert.match(started, /if\(!document\.getElementById\('backupSection'\)\)\{[\s\S]*?clearInterval/,
+    'and must stop when the section is no longer on the screen');
   assert.ok(/pollNotifications\(\); refreshPendingCount\(\); applyPermissionChange\(\);/.test(PAGE),
     'applyPermissionChange is not called from the notification interval');
   /* AND THE GATE LIST IS WRITTEN OUT ONCE. tests/reports.test.js asserts the
