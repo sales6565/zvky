@@ -324,10 +324,41 @@ test('the backup engine, end to end and back again', { skip: SKIP }, async (t) =
       "SELECT DATE_FORMAT(t_dt,'%Y-%m-%d %H:%i:%s.%f') AS f FROM zz_probe_types WHERE id = 2");
     assert.strictEqual(end.f, '9999-12-31 23:59:59.999999');
 
-    /* AND THE GENERATED COLUMN IS DERIVED, not inserted: the dump must not name
-       it, or a server with a strict sql_mode refuses the whole statement. */
     const [[gen]] = await restored.query('SELECT t_gen FROM zz_probe_types WHERE id = 1');
-    assert.strictEqual(Number(gen.t_gen), -256);
+    assert.strictEqual(Number(gen.t_gen), -256, 'the generated column is derived in the copy too');
+  });
+
+  await t.test('the dump does not NAME a generated column', async () => {
+    /* ASSERTED ON THE DUMP'S TEXT, not on the restored value, and that is the
+     * whole point of this test existing separately.
+     *
+     * Naming a generated column in an INSERT is MariaDB error 1906. On a host
+     * whose sql_mode is not strict — which includes the one this suite runs on,
+     * because the dump sets SQL_MODE='NO_AUTO_VALUE_ON_ZERO' — the server
+     * downgrades it to a warning, ignores the value and computes its own. The
+     * restore then succeeds and every row matches, so a test that only compared
+     * values passed against the broken dumper. It did: this was a surviving
+     * mutation until this test was written.
+     *
+     * On a host with STRICT_ALL_TABLES the same dump stops dead at the first
+     * such table — during a restore, which is the worst moment to find out a
+     * backup cannot be read. So the property is about the FILE. */
+    const backup = require('../src/backup');
+    const passFile = path.join(dir, '..', `pass-${crypto.randomBytes(4).toString('hex')}`);
+    await fsp.writeFile(passFile, `${PASS}\n`, { mode: 0o600 });
+    let sqlText;
+    try {
+      const fresh = runJson('backup.js', ['--passphrase-file', passFile, '--no-prune']);
+      const bytes = await backup.collectEntry(path.join(dir, fresh.filename), PASS, 'database/dump.sql');
+      sqlText = bytes.toString('utf8');
+    } finally { await fsp.rm(passFile, { force: true }); }
+
+    const insert = sqlText.match(/INSERT INTO `zz_probe_types` \(([^)]*)\)/);
+    assert.ok(insert, 'found the probe table\'s INSERT in the dump');
+    const columns = insert[1].split(',').map((c) => c.trim().replace(/`/g, ''));
+    assert.ok(columns.includes('t_vc'), `the column list looks right: ${columns.join(',')}`);
+    assert.strictEqual(columns.includes('t_gen'), false,
+      'the dump names a generated column, which a strict server refuses outright');
   });
 
   await t.test('the view, the trigger and the routine come back', async () => {
