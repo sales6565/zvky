@@ -412,24 +412,13 @@ function configSnapshot({ env = process.env, dbVersion, tables }) {
  * endpoint reads — the job runs detached from any request, so a Passenger
  * timeout cannot stop it half way and the browser polls rather than waits.
  */
-async function create(db, {
-  passphrase,
-  encrypt = true,
-  includeSecrets = false,
-  trigger = 'manual',
-  userId = null,
-  userLabel = null,
-  dbConfig = null,
-  env = process.env,
-  onProgress = null,
-  keepLast = null,
-} = {}) {
-  const started = Date.now();
-  const say = (stage, percent, detail) => {
-    if (onProgress) onProgress({ stage, percent, detail });
-  };
-
-  /* ---- 1. refuse early -------------------------------------------------- */
+/* EVERY REASON TO REFUSE BEFORE A BYTE IS WRITTEN, in one function because two
+ * callers need it: create(), which checks and then claims, and runClaimed(),
+ * which is handed a row the web layer already claimed and must check the same
+ * things — a route that claimed the lock and then found the disk full would
+ * leave a `running` row and no explanation.
+ */
+async function preflight(db, { passphrase, encrypt = true, env = process.env } = {}) {
   const here = storage.status({ refresh: true });
   if (!here.ok) {
     const err = new Error(here.problems.map((p) => p.message).join(' '));
@@ -452,16 +441,72 @@ async function create(db, {
   const sized = await estimate(db, { env });
   const free = storage.freeBytes(here.dir);
   if (free !== null && free < sized.bytes * 2) {
-    const err = new Error(`Not enough disk space: this backup needs about `
+    const err = new Error('Not enough disk space: this backup needs about '
       + `${Math.ceil(sized.bytes * 2 / 1048576)} MB free (twice the estimated size, because the `
       + `database is written out before it is packed) and ${Math.floor(free / 1048576)} MB is free. `
       + 'Delete an old backup, or move them off this server.');
     err.code = 'BACKUP_NO_SPACE';
     throw err;
   }
+  return { here, estimate: sized, free };
+}
 
-  /* ---- 2. claim --------------------------------------------------------- */
+/* CLAIM, THEN RUN — the CLI's and the scheduler's entry point.
+ *
+ * The web layer does these two steps separately on purpose: it claims inside
+ * the request so that two people pressing the button get one backup and one
+ * clear refusal, then runs detached so Passenger cannot time the request out.
+ * Both paths end up in runClaimed(), so there is one implementation of what a
+ * backup IS and no second path that could skip the verification.
+ */
+async function create(db, {
+  passphrase,
+  encrypt = true,
+  includeSecrets = false,
+  trigger = 'manual',
+  userId = null,
+  userLabel = null,
+  dbConfig = null,
+  env = process.env,
+  onProgress = null,
+  keepLast = null,
+} = {}) {
+  await preflight(db, { passphrase, encrypt, env });
   const id = await claim(db, { trigger, userId, label: userLabel, encrypted: encrypt });
+  return runClaimed(db, id, {
+    passphrase, encrypt, includeSecrets, dbConfig, env, onProgress, keepLast, trigger,
+  });
+}
+
+/* THE WORK, for a row that is already `running`. */
+async function runClaimed(db, id, {
+  passphrase,
+  encrypt = true,
+  includeSecrets = false,
+  dbConfig = null,
+  env = process.env,
+  onProgress = null,
+  keepLast = null,
+  trigger = 'manual',
+} = {}) {
+  const started = Date.now();
+  const say = (stage, percent, detail) => {
+    if (onProgress) onProgress({ stage, percent, detail });
+  };
+
+  let here;
+  try {
+    ({ here } = await preflight(db, { passphrase, encrypt, env }));
+  } catch (err) {
+    /* THE ROW IS MARKED FAILED WITH THE REASON. The lock is already held, so
+       throwing without recording would leave it held until the sweep. */
+    await db.query(
+      `UPDATE backups SET status = 'failed', error = $1, finished_at = NOW() WHERE id = $2`,
+      [String(err.message || err).slice(0, 500), id]
+    ).catch(() => {});
+    throw err;
+  }
+
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, 'Z');
   const commit = describeCommit().commit;
   const tag = commit ? commit.slice(0, 12) : `v${appVersion()}`;
@@ -1103,7 +1148,8 @@ async function remove(db, id) {
 
 module.exports = {
   PACKAGE_FORMAT, SECRET_ENV, CONFIG_ENV, CODE_EXCLUDE, STAGES,
-  create, verifyFile, openPackage, collectEntry, prune, list, get, lastGood, running, remove,
+  create, runClaimed, preflight,
+  verifyFile, openPackage, collectEntry, prune, list, get, lastGood, running, remove,
   estimate, collectFiles, fileRoots, connectionConfig, configSnapshot,
   secretsBundle, openSecretsBundle, writeCodeArchive, gitAvailable, describeCommit, appVersion,
   hashFile, claim, beat,

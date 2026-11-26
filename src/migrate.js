@@ -842,10 +842,21 @@ async function ensureBackupTables(db, log) {
          secret-filter test asserts that, and the column name is in that test's
          list of things that must not appear in a response. */
       passphrase_enc    TEXT         NULL,
+      /* The fingerprint of the KEY it was encrypted under, not of the
+         passphrase. src/email-secret.js compares it on read so that a rotated
+         EMAIL_ENCRYPTION_KEY produces "set it again" rather than a decrypt
+         failure nobody can interpret. */
+      passphrase_fp     VARCHAR(64)  NULL,
       passphrase_set_at DATETIME     NULL,
       passphrase_set_by VARCHAR(191) NULL,
       last_run_slot     VARCHAR(32)  NULL,
       last_run_at       DATETIME     NULL,
+      /* The "nothing has been backed up for a week" notice is once a day, and
+         this is what makes it once a day across however many processes
+         Passenger is running — the same conditional-UPDATE claim the schedule
+         itself uses, under a different name so the two cannot consume each
+         other's slot. */
+      last_reminder_slot VARCHAR(32) NULL,
       updated_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       updated_by        VARCHAR(191) NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));

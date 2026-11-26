@@ -36,6 +36,15 @@ const KINDS = {
      to these guards both began with somebody noticing files were gone days
      later. The sentence is carried in `detail`, like the reminder kinds. */
   chat_storage: 'chat_storage',
+  /* THERE IS NO BACKUP, or the one the schedule took has failed.
+   *
+     The same shape as chat_storage above and for the same reason: a guard that
+     trips silently turns a visible disaster into an invisible one. This is the
+     worse of the two, because the silence is reassuring — the schedule is
+     switched on, the Settings screen says "daily at 02:00", and nothing has
+     been written for a fortnight. Raised by src/backup-scheduler.js to every
+     holder of backup.manage, with the sentence in `detail`. */
+  backup: 'backup',
   assigned: 'assigned',            // it is yours now
   unassigned: 'unassigned',        // it is no longer yours
   /* Work has been handed in, told to the people who are now waiting on it:
@@ -254,6 +263,9 @@ function describe(row) {
   }
   if (row.kind === KINDS.chat_storage) {
     return row.detail || 'Chat attachment storage needs attention — see Settings → Chat.';
+  }
+  if (row.kind === KINDS.backup) {
+    return row.detail || 'The backup of Forge needs attention — see Settings → Backup.';
   }
   if (row.kind === KINDS.server_delete_request) {
     return row.detail || `${row.other_name || 'Somebody'} asked for a file on the office server to be deleted.`;

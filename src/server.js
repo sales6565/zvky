@@ -26,6 +26,7 @@ const adminDashboardRoutes = require('./routes/admin-dashboard');
 const pnlRoutes = require('./routes/pnl');
 const permissionRoutes = require('./routes/permissions');
 const roleGroupRoutes = require('./routes/role-groups');
+const backupRoutes = require('./routes/backups');
 const emailDeliveryRoutes = require('./routes/email-delivery');
 const reportRoutes = require('./routes/reports');
 const leaveRoutes = require('./routes/leave');
@@ -205,6 +206,7 @@ app.use('/api/admin-dashboard', adminDashboardRoutes);
 app.use('/api/pnl', pnlRoutes);
 app.use('/api/permissions', permissionRoutes);
 app.use('/api/role-groups', roleGroupRoutes);
+app.use('/api/backups', backupRoutes);
 app.use('/api/email-delivery', emailDeliveryRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/leave', leaveRoutes);
@@ -743,6 +745,19 @@ async function start() {
        above it: one timer, unref'd, and a no-op when EMAIL_SWEEP_MS is 0 (which
        is what the test suite sets, so a suite never races a background send). */
     require('./email-outbox').schedule(db);
+    /* WHERE BACKUPS GO, SAID OUT LOUD, for exactly the reason the chat folder
+       above is: a backup written inside the application folder is deleted by
+       the next cPanel deploy, and the thing that makes that expensive is that
+       nothing anywhere says where it went. See src/backup-storage.js. */
+    require('./backup-storage').describeAtStartup();
+    /* AND THE SCHEDULE, which is off until somebody switches it on and stores a
+       passphrase. NO STARTUP PASS, unlike every sweep above it: those catch up
+       on work that came due while the process was down, and catching up on a
+       missed backup means writing a 20 MB package on every restart — a restart
+       loop would fill the disk. The tick is five minutes away at worst. It also
+       raises the "nothing has been backed up for a week" notice. See
+       src/backup-scheduler.js. */
+    require('./backup-scheduler').start(db);
   } catch (err) {
     // Start anyway: a server that is up can report through /api/health why the
     // database is unreachable, where one that exited says nothing at all.

@@ -86,6 +86,10 @@ async function startServer(cfg, extraEnv = {}, attempt = 0) {
       // and the test-only probe endpoint mounted. A suite testing the switch overrides it.
       INTEGRATION_ENABLED: 'true',
       INTEGRATION_TEST_ENDPOINTS: '1',
+      /* NO BACKUP TICK, for the same reason EMAIL_SWEEP_MS is 0: a suite must
+         never race a background job that writes a 20 MB file. The scheduler
+         suite calls tick() directly, which is why tick() is exported. */
+      BACKUP_TICK_MINUTES: '0',
       ...extraEnv,
     },
     stdio: ['ignore', 'pipe', 'pipe'],

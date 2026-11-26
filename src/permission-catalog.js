@@ -2686,6 +2686,55 @@ const GROUPS = [
           + 'in a group, in one action.',
       },
       {
+        /* TAKING A BACKUP — Prompt 74.
+         *
+         * SUPER ADMIN ONLY BY DEFAULT, through the same implication the two
+         * permission screens beside it use: managePermissions is carried by
+         * that tier and no other. A backup is a single file containing every
+         * password hash, every encrypted setting and the whole of the studio's
+         * business data, so the ability to produce one starts in the same hands
+         * as the ability to decide who may do what.
+         *
+         * GRANTABLE, and through role groups like everything else. A studio
+         * that wants its systems person to run the nightly backups without
+         * also handing them the role screen can do that, which is a reasonable
+         * thing to want.
+         *
+         * SEPARATE FROM backup.download ON PURPOSE. Creating a backup leaves
+         * the file on the server; taking a COPY of it off the server is the act
+         * that moves every hash in the studio onto somebody's laptop. A studio
+         * can reasonably let somebody do the first and not the second — and the
+         * schedule is in this key rather than its own, because a schedule is
+         * only a create that happens at two in the morning. */
+        key: 'backup.manage',
+        label: 'Manage Backups',
+        impliedBy: has('managePermissions'),
+        describe: 'Open Settings → Backup. Take a backup now, verify one, delete one, and set the '
+          + 'nightly schedule. Taking a backup also needs the account’s own password typed again.',
+        danger: 'A backup contains every password hash, every encrypted setting and all of the '
+          + 'studio’s data in one file. Whoever holds this decides when one is made and can '
+          + 'delete the ones that exist.',
+      },
+      {
+        /* DOWNLOADING ONE, which is the act that matters most on this screen.
+         *
+         * A package on the server is protected by the server. A package on
+         * somebody's laptop is protected by its passphrase and nothing else,
+         * and it will outlive every employment and every password change in the
+         * studio. So this is its own key, its own step-up and its own audit
+         * entry — and the Settings screen says plainly that a backup kept only
+         * on the server is not a safe backup, because the honest advice and the
+         * dangerous action are the same action. */
+        key: 'backup.download',
+        label: 'Download Backups',
+        impliedBy: has('managePermissions'),
+        describe: 'Download a backup package from the server. The account’s own password has to '
+          + 'be typed again, and every download is recorded in the Activity Log with who took it.',
+        danger: 'A downloaded package leaves the server’s protection for good. It holds every '
+          + 'password hash in the studio and is only as safe as its passphrase and wherever it '
+          + 'is stored.',
+      },
+      {
         /* READING THE PERMISSION MAP, which is a different act from editing it.
            A producer answering "why can Ana not open the Server tab" needs to see
            the map; giving them settings.permissions to do it hands them the ability

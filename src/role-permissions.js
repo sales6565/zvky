@@ -429,9 +429,21 @@ async function audit(db, roleKey, limit = 100) {
  * Worked out from the permission rather than from a role name, so granting the
  * key to a second designation in Settings is the whole of adding somebody to
  * whatever rota is being computed — no recipient list to maintain, nothing to
- * keep in step. Reads effectiveFor() per role, which is the same answer
- * authenticate() computes per request, so this cannot disagree with what the
- * person's own session would say.
+ * keep in step.
+ *
+ * BOTH WAYS OF HOLDING A KEY, which is the correction this function needed.
+ * effectiveFor(db, role) answers "what does this designation hold" — role
+ * permissions and the role groups attached to that designation. It cannot
+ * answer the third route, added when role groups learned to take individual
+ * people: a group attached to NOBODY'S designation, holding one person
+ * directly. Somebody in that position holds the key in every other part of the
+ * application — authenticate() unions all three — and was silently missing from
+ * every audience computed here, which is the one place a missing holder is
+ * invisible: nobody notices a notification they were never sent.
+ *
+ * So the two halves are unioned by id below. The grant rule is the SAME rule
+ * grantsForUser() applies (active accounts only, see src/role-groups.js), asked
+ * here as one query over the group tables rather than per user.
  *
  * src/routes/project-reviews.js has an older, local copy of this idea
  * (queueWatchers). It is deliberately left where it is: it works, it is
@@ -445,14 +457,34 @@ async function usersWithPermission(db, key, { activeOnly = true } = {}) {
     const held = await effectiveFor(db, role).catch(() => null);
     if (held && held.has(key)) holding.push(role);
   }
-  if (!holding.length) return [];
-  const { rows } = await db.query(
-    `SELECT id, \`name\`, email, \`role\` FROM users
-      WHERE \`role\` IN ($1) ${activeOnly ? 'AND is_active = 1' : ''}
-      ORDER BY \`name\``,
-    [holding]
-  );
-  return rows;
+
+  const found = new Map();
+  if (holding.length) {
+    const { rows } = await db.query(
+      `SELECT id, \`name\`, email, \`role\` FROM users
+        WHERE \`role\` IN ($1) ${activeOnly ? 'AND is_active = 1' : ''}
+        ORDER BY \`name\``,
+      [holding]
+    );
+    for (const row of rows) found.set(row.id, row);
+  }
+
+  /* THE THIRD ROUTE. Wrapped because a deployment whose migration has not yet
+     created role_group_users must still notify the people it can name. */
+  try {
+    const { rows } = await db.query(
+      `SELECT DISTINCT u.id, u.\`name\`, u.email, u.\`role\`
+         FROM role_group_users gu
+         JOIN users u ON u.id = gu.user_id
+         JOIN role_group_permissions gp ON gp.group_id = gu.group_id
+        WHERE gp.permission_key = $1 ${activeOnly ? 'AND u.is_active = 1' : ''}
+        ORDER BY u.\`name\``,
+      [key]
+    );
+    for (const row of rows) if (!found.has(row.id)) found.set(row.id, row);
+  } catch { /* not migrated: the role-based half above stands */ }
+
+  return [...found.values()].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
 }
 
 module.exports = {
