@@ -113,6 +113,50 @@ test('backup routes: permissions, step-up, audit, and nothing leaked', { skip: S
     assert.strictEqual(ok.status, 200);
   });
 
+  await t.test('the two keys are genuinely separate: one without the other', async () => {
+    /* THE TEST THE SUITE WAS MISSING, and the reason the separation was
+     * untested: everybody in it held both keys or neither, so swapping the
+     * download route's guard to backup.manage changed nobody's answer. A
+     * mutation that did exactly that survived the whole suite.
+     *
+     * Two permissions exist for one reason: an office manager who runs the
+     * Friday backup is not necessarily somebody who may carry every password
+     * hash in the studio home on a laptop. If that cannot be expressed, there
+     * is no point having two. So here is somebody who holds the first and not
+     * the second, and the proof is that one route — and only that one —
+     * refuses them.
+     */
+    const grant = await as('owner', '/permissions/roles/admin', { method: 'PUT',
+      body: { permissions: ['backup.manage'] } });
+    assert.strictEqual(grant.status, 200, JSON.stringify(grant.body));
+
+    /* The permission set is read per request, so no new sign-in is needed. */
+    const list = await as('admin', '/backups');
+    assert.strictEqual(list.status, 200, 'backup.manage opens the section');
+    assert.strictEqual(list.body.can.download, false,
+      'and the payload tells the screen to hide the Download button');
+
+    const grabbed = await as('admin', '/backups/00000000-0000-4000-8000-000000000000/download',
+      { method: 'POST', body: { password: PASSWORD } });
+    assert.strictEqual(grabbed.status, 403,
+      'taking a backup is not the same as being allowed to carry one home');
+
+    /* AND THE OTHER DIRECTION: download alone does not open the section. */
+    const swap = await as('owner', '/permissions/roles/admin', { method: 'PUT',
+      body: { permissions: ['backup.download'] } });
+    assert.strictEqual(swap.status, 200, JSON.stringify(swap.body));
+    const shut = await as('admin', '/backups');
+    assert.strictEqual(shut.status, 403, 'backup.download is not a way into the section');
+
+    /* Put the admin back to nothing, so the gate test above stays true for
+       every later subtest. */
+    const reset = await as('owner', '/permissions/roles/admin', { method: 'PUT',
+      body: { permissions: [] } });
+    assert.strictEqual(reset.status, 200);
+    const gone = await as('admin', '/backups');
+    assert.strictEqual(gone.status, 403);
+  });
+
   await t.test('signed out is 401, not 403 — the route exists', async () => {
     const r = await api(server.base, '/backups');
     assert.strictEqual(r.status, 401);

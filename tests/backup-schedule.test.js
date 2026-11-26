@@ -248,17 +248,46 @@ test('the backup schedule', { skip: SKIP }, async (t) => {
         resolve(line ? JSON.parse(line) : { error: 'no output' });
       });
     });
+    await clearNotices();
     const results = await Promise.all([one(), one(), one(), one()]);
     const ran = results.filter((r) => r.ran);
     assert.strictEqual(ran.length, 1,
       `exactly one process may take tonight's backup; ${ran.length} did: ${JSON.stringify(results)}`);
-    /* AND THE OTHER THREE SAID WHY, rather than failing. */
-    for (const other of results.filter((r) => !r.ran)) {
-      assert.ok(/another process|already run|busy|in progress/i.test(other.reason || other.error || ''),
-        `a process that stood down should say why: ${JSON.stringify(other)}`);
-    }
     const after = (await conn.query("SELECT COUNT(*) c FROM backups WHERE trigger_kind='scheduled'"))[0][0].c;
     assert.strictEqual(Number(after) - Number(before), 1, 'exactly one row was written');
+
+    /* THE THREE THAT STOOD DOWN MUST HAVE STOOD DOWN AT THE SLOT, not collided
+     * with the engine — and this is the assertion that gives the slot claim any
+     * value at all.
+     *
+     * "Exactly one backup" is true either way: if all four believed they owned
+     * the slot, three of them would reach backup.create() and lose the ENGINE's
+     * lock instead, and one package would still be written. A mutation removing
+     * the conditional from claimSlot() survived the test until this was added.
+     *
+     * What differs is what the studio is told. A process that loses the engine
+     * lock has FAILED, so it raises the "the scheduled backup failed" notice to
+     * everybody holding backup.manage — three of them, every night, on any host
+     * running more than one worker. A notice that cries wolf nightly is how the
+     * one that matters gets ignored, which is the whole failure this feature
+     * exists to prevent. */
+    for (const other of results.filter((r) => !r.ran)) {
+      const why = String(other.reason || other.error || '');
+      /* EITHER SLOT ANSWER IS RIGHT. The four do not start in the same
+         microsecond, so a process can find the slot already taken when it asks
+         due() — "already run for this slot" — or lose the conditional UPDATE
+         in claimSlot() — "another process took this slot". Both are the slot
+         mechanism doing its job. What must NEVER appear is the engine's
+         answer, "a backup is already running": that means the process got past
+         the slot, reached the engine, and lost there, which is a failed run. */
+      assert.match(why, /already run for this slot|another process took this slot/i,
+        `a process that stood down must stand down at the slot, not at the engine: ${JSON.stringify(other)}`);
+      assert.doesNotMatch(why, /backup is already running/i,
+        'reaching the engine at all means the slot did not hold');
+      assert.notStrictEqual(other.failed, true, 'standing down is not a failure');
+    }
+    assert.deepStrictEqual(await notices(), [],
+      'losing the race is not something to tell the studio about');
   });
 
   /* ------------------------------------------------------- the failures */

@@ -457,6 +457,113 @@ test('the backup engine, end to end and back again', { skip: SKIP }, async (t) =
     assert.match(got.output, /deploy/i, 'and says what would destroy them');
   });
 
+  await t.test('a forged package cannot write outside its own folders', async () => {
+    /* THE THREAT THIS IS ABOUT: a package somebody else handed over. Ours
+     * cannot contain an entry named `files/uploads/../../..`; a package from a
+     * stranger, or one edited by somebody who got at the backup folder, can —
+     * and the restore command runs as the account that owns the application.
+     *
+     * SO THE PACKAGE HERE IS FORGED AND VALID. It is correctly gzipped, sealed
+     * with the real passphrase and carries a manifest whose hashes all match,
+     * so it passes verification exactly as a genuine one does. Only the entry
+     * NAMES are hostile, which is the whole point: verification is about
+     * integrity, not intent, and the containment check is a separate job.
+     *
+     * A grep for the check in the source was not enough — a mutation that
+     * turned `if (!inside)` into `if (false)` left the line the grep matched
+     * and survived. Nothing short of running it proves anything here.
+     */
+    const zlib = require('node:zlib');
+    const { PassThrough } = require('node:stream');
+    const { pipeline } = require('node:stream/promises');
+    const tar = require('../src/tar-stream');
+    const crypt = require('../src/backup-crypto');
+    const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
+
+    const evil = Buffer.from('this must never be written anywhere\n');
+    const escapes = [
+      `files/uploads/${'../'.repeat(6)}${path.basename(os.homedir())}-ESCAPED-ABSOLUTE.txt`,
+      'files/uploads/../../ESCAPED-RELATIVE.txt',
+      'files/nosuchroot/x.txt',
+    ];
+    const names = [...escapes, 'files/uploads/legit-probe/ok.txt'];
+    const parts = [
+      { name: 'database/dump.sql', buffer: Buffer.from('-- nothing to load\n') },
+      ...names.map((n) => ({ name: n, buffer: evil })),
+    ];
+    const manifest = {
+      format: 1, kind: 'forge-backup', id: 'forged', createdAt: new Date().toISOString(),
+      createdBy: 'a package somebody else handed over', trigger: 'manual',
+      encrypted: true, includesSecrets: false,
+      versions: { forge: '1.0.0', commit: null, node: process.version, database: 'x', packageFormat: 1 },
+      database: { name: 'x', tables: {}, tableCount: 0, rowCount: 0, views: [], triggers: [], routines: [], events: [] },
+      files: { count: names.length, bytes: evil.length * names.length, roots: [] },
+      excluded: ['(a forged package, written by the test suite)'],
+      parts: [{ name: 'manifest.json', sha256: null, bytes: null },
+        ...parts.map((p) => ({ name: p.name, sha256: sha(p.buffer), bytes: p.buffer.length }))],
+    };
+    const forged = path.join(dir, 'forged.tar.gz.enc');
+    const side = crypt.writer({ passphrase: PASS, encrypt: true,
+      extra: { createdAt: manifest.createdAt, forge: '1.0.0' } });
+    const out = fs.createWriteStream(forged, { mode: 0o600 });
+    out.write(side.head);
+    const pack = new tar.Pack();
+    const done = pipeline(pack, zlib.createGzip(), side.cipher, new PassThrough(), out, { end: false });
+    const feed = (async () => {
+      await pack.addBuffer('manifest.json', Buffer.from(JSON.stringify(manifest, null, 2)), { mode: 0o600 });
+      for (const p of parts) await pack.addBuffer(p.name, p.buffer, { mode: 0o600 });
+      pack.finish();
+    })();
+    await Promise.all([done, feed]);
+    const tag = side.finish();
+    if (tag.length) out.write(tag);
+    await new Promise((res) => out.end(res));
+
+    /* A database of its own, so a forged package cannot disturb the round-trip
+       comparison above it. */
+    const scratch = `${cfg.database}_forged`;
+    const admin = await mysql.createConnection({
+      host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password });
+    await admin.query(`DROP DATABASE IF EXISTS \`${scratch}\``);
+    await admin.query(`CREATE DATABASE \`${scratch}\` CHARACTER SET utf8mb4`);
+    await admin.end();
+
+    const landing = [
+      path.join(os.homedir(), `${path.basename(os.homedir())}-ESCAPED-ABSOLUTE.txt`),
+      path.join(ROOT, '..', 'ESCAPED-RELATIVE.txt'),
+      path.join(ROOT, 'ESCAPED-RELATIVE.txt'),
+      path.join(os.homedir(), 'ESCAPED-RELATIVE.txt'),
+    ];
+    for (const spot of landing) await fsp.rm(spot, { force: true });
+
+    const passFile = path.join(dir, '..', `pass-${crypto.randomBytes(4).toString('hex')}`);
+    await fsp.writeFile(passFile, `${PASS}\n`, { mode: 0o600 });
+    let result;
+    try {
+      result = runJson('restore.js', [forged, '--passphrase-file', passFile,
+        '--target-db', scratch, '--yes']);
+    } finally { await fsp.rm(passFile, { force: true }); }
+
+    assert.strictEqual(result.ok, true, 'a forged-but-valid package still verifies and restores');
+    assert.strictEqual(result.files, 1, 'exactly the one legitimate entry was written');
+    assert.strictEqual(result.skipped.length, escapes.length,
+      `every hostile entry must be refused: ${JSON.stringify(result.skipped)}`);
+    for (const name of escapes) {
+      assert.ok(result.skipped.includes(name), `${name} was not refused`);
+    }
+    for (const spot of landing) {
+      assert.strictEqual(fs.existsSync(spot), false, `something escaped to ${spot}`);
+    }
+    const wrote = path.join(ROOT, 'uploads', 'legit-probe', 'ok.txt');
+    assert.ok(fs.existsSync(wrote), 'and the legitimate entry did land, inside its own root');
+    await fsp.rm(path.join(ROOT, 'uploads', 'legit-probe'), { recursive: true, force: true });
+    await fsp.rm(forged, { force: true });
+    const admin2 = await mysql.createConnection({
+      host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password });
+    await admin2.query(`DROP DATABASE IF EXISTS \`${scratch}\``);
+    await admin2.end();
+  });
+
   /* ------------------------------------------------------- the lock, again */
   await t.test('two backups at once: one runs, the other is told why not', async () => {
     const passFile = path.join(dir, '..', `pass-${crypto.randomBytes(4).toString('hex')}`);
