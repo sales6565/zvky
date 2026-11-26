@@ -26968,6 +26968,14 @@ const NOTIF_TITLES = {
      holds the retention permission and nobody else. The sentence underneath
      carries the numbers; the title's job is to say which screen to open. */
   chat_storage: 'Chat attachment storage needs attention',
+  /* THERE IS NO BACKUP, or last night's failed. The same shape as the line
+     above and for the same reason — a guard that trips silently turns a visible
+     disaster into an invisible one — but this is the worse of the two, because
+     the silence is reassuring: the schedule is on, the screen says "daily at
+     02:00", and nothing has been written for a fortnight. The sentence
+     underneath carries the diagnosis; the title's job is to say which screen to
+     open. See KINDS.backup in src/notifications.js. */
+  backup: 'The backup needs attention',
 };
 const notifTitle = (n) => (n && NOTIF_TITLES[n.kind]) || 'Something needs your attention';
 
