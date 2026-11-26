@@ -1010,6 +1010,41 @@ tr.past-round{opacity:0.62;}
   .rh-f.rh-wide{flex-basis:100%;}
   .rh-act{width:100%;justify-content:flex-end;}
 }
+/* The Backup section. Four small things the rest of the stylesheet has no name
+   for: the passphrase strength hint, the loud "if you lose it" box, a check box
+   whose label wraps to several lines, and the status line's own colouring. */
+.bk-hint{font-size:11px;color:var(--ink-faint);margin:4px 0 0;min-height:14px;}
+.bk-hint.bad{color:var(--danger-ink);}
+.bk-hint.good{color:var(--success-ink);}
+.bk-warn{margin-top:12px;padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.5;
+  background:var(--warning-wash-t10);border:1px solid var(--warning-wash-t32);color:var(--warning-ink);}
+.bk-check{display:flex;gap:9px;align-items:flex-start;font-size:12px;line-height:1.5;cursor:pointer;}
+.bk-check input{margin-top:2px;flex:0 0 auto;}
+/* A LABELLED FIELD ON ITS OWN, outside the .ref-add grid. Without this the
+   label and the input sit on one line and the input collapses to its default
+   width — which is what the first version of this section did, found by
+   looking at a screenshot of it rather than at the markup. */
+.bk-field{margin-top:12px;}
+.bk-field > label{display:block;margin-bottom:4px;}
+.bk-field > input{width:100%;max-width:420px;}
+#bkCreateWrap > .modal > label{display:block;margin-bottom:4px;}
+#bkCreateWrap > .modal > input{width:100%;}
+.bk-status{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:baseline;padding:10px 12px;
+  border-radius:8px;background:var(--surface-2);border:1px solid var(--border);font-size:13px;}
+.bk-status.stale{background:var(--danger-ink-t14);border-color:var(--danger-ink-t44);color:var(--danger-ink);}
+.bk-status strong{font-weight:600;}
+.bk-prog{height:6px;border-radius:3px;background:var(--surface-3);overflow:hidden;margin-top:8px;}
+.bk-prog > span{display:block;height:100%;background:var(--brand-accent);transition:width .4s ease;}
+.bk-list{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:12px;}
+.bk-list th{text-align:left;font-weight:600;color:var(--ink-faint);padding:6px 8px;border-bottom:1px solid var(--border);}
+.bk-list td{padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:top;}
+.bk-list td.bk-actions{white-space:nowrap;text-align:right;}
+.bk-pill{display:inline-block;padding:1px 7px;border-radius:9px;font-size:10.5px;font-weight:600;letter-spacing:.02em;}
+.bk-pill.ok{background:var(--warning-wash-t10);color:var(--warning-ink);}
+.bk-pill.verified{background:var(--success-wash-t10);color:var(--success-ink);}
+.bk-pill.failed{background:var(--danger-ink-t14);color:var(--danger-ink);}
+.bk-pill.running{background:var(--surface-2);color:var(--ink-faint);}
+
 /* The Settings accordion. Placed after .ref-section and .ref-head above, so
    the display rule cannot lose a source-order tie to what it overrides. */
 .ref-section.acc{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px;
@@ -2700,6 +2735,51 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     <div class="modal-actions">
       <button class="btn btn-ghost" id="ask_cancel" type="button">Cancel</button>
       <button class="btn btn-brand" id="ask_confirm" type="button"></button>
+    </div>
+  </div>
+</div>
+
+<!-- TAKE A BACKUP. Four fields, which is why it is not openAsk(): the passphrase
+     twice, the account password for the step-up, and whether to include the
+     environment secrets. The body is static markup like every other modal here;
+     only the strength hint and the error line change as somebody types.
+
+     NOTHING IN HERE IS EVER PRE-FILLED, and the three password fields are
+     cleared by bkCloseCreate() on the way out — they hold live credentials, and
+     a value left in a hidden input is a value the next person at that desk can
+     read out of the DOM. -->
+<div class="modal-wrap" id="bkCreateWrap">
+  <div class="modal" style="width:520px;" role="dialog" aria-modal="true" aria-labelledby="bk_create_title">
+    <h2 id="bk_create_title">Take a backup</h2>
+    <div class="ref-note" style="margin-bottom:14px;">This writes one file containing the code, the
+      whole database, the uploaded files and the configuration. It is encrypted with a passphrase
+      you choose here.</div>
+
+    <label for="bk_pass1">Passphrase</label>
+    <input type="password" id="bk_pass1" autocomplete="new-password" spellcheck="false">
+    <div id="bk_strength" class="bk-hint"></div>
+
+    <label for="bk_pass2" style="margin-top:10px;">Passphrase again</label>
+    <input type="password" id="bk_pass2" autocomplete="new-password" spellcheck="false">
+
+    <div class="bk-warn" id="bk_lostwarn"></div>
+
+    <label class="bk-check" style="margin-top:12px;">
+      <input type="checkbox" id="bk_secrets">
+      <span>Include the environment secrets (the mail password, the integration keys and the
+        encryption key), encrypted inside the package with the same passphrase. Leave this off
+        unless you are moving the studio to another server.</span>
+    </label>
+
+    <hr style="margin:16px 0;border:none;border-top:1px solid var(--border);">
+
+    <label for="bk_password">Your own password, to confirm it is you</label>
+    <input type="password" id="bk_password" autocomplete="current-password">
+
+    <div class="ref-err" id="bk_create_err"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="bk_create_cancel" type="button">Cancel</button>
+      <button class="btn btn-brand" id="bk_create_go" type="button">Start the backup</button>
     </div>
   </div>
 </div>
@@ -4648,6 +4728,11 @@ const SETTINGS_SECTIONS = [
      that tier to the whole catalogue and setForRole cannot write it away — which
      is why this entry needs no tier fallback beside can(). */
   { permission:'settings.default_password', label:'Password reset', heading:'Password reset', note:'The one default password an administrator reset gives somebody, how long it stays valid, and whether they must choose a new one at next sign-in. The value is stored encrypted and is never shown again, to anybody.' },
+  /* BACKUP. In this list for the same reason every other section is: it is what
+     canOpenSettings() is built from, so a holder of nothing but backup.manage
+     could not reach the Settings tab at all without it — the exact bug the
+     password-reset section's suite is the fence around. */
+  { permission:'backup.manage', label:'Backup', heading:'Backup', note:'Take a full backup of this installation — code, database, uploaded files and configuration — in one encrypted file, download it, verify it, and set a nightly schedule. Restoring is a command run over SSH, not a button here.' },
   { permission:'settings.ip_allowlist', label:'IP Allowlist',     heading:'Allowed IP Addresses', note:'Which addresses may reach this application at all.' },
   { permission:'settings.ip_blocklist', label:'IP Blocklist',     heading:'Blocked IP Addresses', note:'Addresses barred outright, whatever else allows them.' },
   { permission:'settings.email_config', label:'Email Configuration', heading:'Email Configuration', note:'The mail server task notifications are sent through.' },
@@ -5806,6 +5891,19 @@ function askClose(){
   if(!askWrap) return;
   askWrap.classList.remove('show');
   askActive = null;
+  /* THE FIELD IS EMPTIED ON THE WAY OUT, and the line is put back to `text`.
+   *
+   * Added when Settings → Backup started asking this dialog for a passphrase
+   * and an account password: those are live credentials, and a hidden input
+   * keeps its value for as long as the tab stays open, where the next person at
+   * that desk can read it out of the DOM. Clearing every answer rather than
+   * only the secret ones is the simpler rule and costs nothing — openAsk fills
+   * the field from `input.value` on the way in, so no caller relied on what was
+   * left behind. */
+  const line = document.getElementById('ask_input');
+  const area = document.getElementById('ask_textarea');
+  if(line){ line.value = ''; line.type = 'text'; }
+  if(area) area.value = '';
 }
 
 /* ENTER CONFIRMS, ESCAPE CANCELS, and it is bound once on the document rather
@@ -5858,6 +5956,12 @@ function openAsk({ title, message = '', input = null, confirmLabel = 'OK',
     other.value = '';
     box.value = input.value === undefined || input.value === null ? '' : String(input.value);
     box.placeholder = input.placeholder || '';
+    /* A PASSWORD FIELD WHEN THE ANSWER IS ONE. Settings → Backup asks this
+       dialog for a passphrase and for the viewer's own password; typing either
+       in clear on a studio screen is exactly the thing a step-up is meant to
+       prevent. Only the one-line field: there is no such thing as a multiline
+       password. askClose() puts the type back. */
+    if(!multiline) box.type = input.password ? 'password' : 'text';
     /* THE LIMIT IS THE BROWSER'S TOO, not only ours: maxlength stops the typing
        rather than scolding afterwards, which is the kinder half of a maximum. The
        check below still runs, because a paste into a field without maxlength —
@@ -15934,6 +16038,11 @@ async function renderSettings(){
            section needs to prove. The .ref-section inside carries the
            <h3>Password reset</h3> that the accordion keys off. */''}
     ${can('settings.default_password') ? '<div id="settings-password-reset"></div>' : ''}
+    ${/* BACKUP. Beside the sections above it because it belongs with the other
+           things that hold the whole studio in one place: the one screen where a
+           mistake is not recoverable, so it is gated on its own danger
+           permission and every action on it asks for a password again. */''}
+    ${can('backup.manage') ? '<div id="backupSection"></div>' : ''}
     ${can('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
     ${can('settings.ip_blocklist') ? '<div id="ipBlocklistSection"></div>' : ''}
     ${can('settings.email_config') ? '<div id="emailConfigSection"></div>' : ''}
@@ -15978,6 +16087,12 @@ async function renderSettings(){
   /* Beside the two IP lists and the mail credentials, which is where it sits on
      the page: all four decide who can get into something. */
   if(can('settings.default_password')) await renderPasswordResetSettings();
+  /* Its own danger permission, Super Admin only by default. Drawn rather than
+     loaded is NOT the choice here, unlike Chat Activity: this screen's whole
+     value is the status line saying when the last backup was, and a section
+     that needed pressing before it told you there had not been one for a
+     fortnight would be useless. */
+  if(can('backup.manage')) await renderBackupSettings();
   if(can('settings.ip_allowlist')) await renderIpAllowlist();
   /* Its own permission again, and a narrower one: blocking is Super Admin only
      by default. Drawn below the allowlist, which is the reverse of the order the
@@ -22245,6 +22360,517 @@ async function renderPasswordResetSettings(){
   };
 }
 
+/* ===========================================================================
+ * SETTINGS -> BACKUP.
+ *
+ * THE MIRROR. Everything this section decides is the server's decision shown
+ * back: whether the folder is usable, whether the last backup is stale, how
+ * strong a passphrase has to be, whether the viewer may download. The page
+ * computes none of it — `bkState.data` is the payload from GET /api/backups and
+ * the screen is a rendering of it. The one piece of judgement here is the
+ * passphrase hint, which exists so somebody is not told "too weak" only after
+ * pressing the button; the server checks it again and its answer is the one
+ * that counts.
+ *
+ * WHY THE PROGRESS IS POLLED AND NOT STREAMED. A backup takes seconds on a
+ * small studio and minutes on a large one, and the request that starts it
+ * returns 202 immediately so Passenger cannot time it out. The row carries
+ * stage and percent; this asks for them every two seconds while one is running
+ * and stops the moment it is not. No new polling loop in the ordinary case —
+ * there is nothing to poll unless a backup is actually in progress.
+ *
+ * THERE IS NO RESTORE BUTTON, and there is deliberately no mention of one
+ * beyond the sentence that says where restoring lives. See scripts/restore.js
+ * for the argument.
+ */
+const bkState = { data: null, err: null, busy: false, poll: null, editingSchedule: false, scheduleErr: null };
+
+function bkBytes(n){
+  if(n === null || n === undefined) return '—';
+  const mb = Number(n) / 1048576;
+  if(mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
+  return `${mb.toFixed(1)} MB`;
+}
+
+function bkWhen(value){
+  if(!value) return '—';
+  const d = new Date(value);
+  if(Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString(undefined, { year:'numeric', month:'short', day:'numeric',
+    hour:'2-digit', minute:'2-digit' });
+}
+
+/* THE SAME RULE THE SERVER APPLIES, mirrored. src/backup-crypto.js's strength()
+   is the authority; this is its message written while somebody types. Kept to
+   the one number it checks so the two cannot drift into different rules — if
+   the server ever wants more than a length, this hint goes back to asking it. */
+const BK_MIN_PASSPHRASE = 12;
+function bkStrength(value){
+  const typed = String(value || '');
+  if(!typed) return { cls:'', text:'' };
+  if(typed.length < BK_MIN_PASSPHRASE){
+    return { cls:'bad', text:`${BK_MIN_PASSPHRASE - typed.length} more character${
+      BK_MIN_PASSPHRASE - typed.length === 1 ? '' : 's'} — a backup passphrase is the only thing between this file and everything in it` };
+  }
+  /* Beyond the minimum the honest thing to say is how long it is, not a verdict
+     dressed up as a score: this application cannot tell a strong passphrase
+     from a long bad one, and a green "Strong!" on "passwordpassword" would be a
+     lie that makes somebody feel safe. */
+  const words = typed.trim().split(/\s+/).length;
+  return { cls:'good', text: words >= 4
+    ? `${typed.length} characters in ${words} words — good. Write it down somewhere other than this server.`
+    : `${typed.length} characters. Several unrelated words are easier to keep and harder to guess than one long one.` };
+}
+
+async function renderBackupSettings(){
+  const el = document.getElementById('backupSection');
+  if(!el) return;
+  if(!bkState.data && !bkState.err){
+    try{ bkState.data = await api('/backups'); }
+    catch(err){ bkState.err = err.message; }
+  }
+  if(bkState.err){
+    el.innerHTML = `<div class="ref-section"><div class="ref-head"><h3>Backup</h3></div>
+      <div class="ref-err">${escapeHTML(bkState.err)}</div></div>`;
+    return;
+  }
+  const d = bkState.data;
+  const sch = d.schedule || {};
+  const canDownload = Boolean(d.can && d.can.download);
+
+  /* ---- the status line, which is the point of the whole section --------- */
+  const status = d.last.exists
+    ? `<div class="bk-status${d.last.stale ? ' stale' : ''}">
+         <span>Last verified backup <strong>${escapeHTML(bkWhen(d.last.at))}</strong></span>
+         <span>${escapeHTML(bkBytes(d.last.size))}</span>
+         <span>${d.last.ageDays === 0 ? 'today'
+            : `${d.last.ageDays} day${d.last.ageDays === 1 ? '' : 's'} ago`}</span>
+         ${d.last.stale ? `<span><strong>That is more than ${d.last.staleAfterDays} days. Take one now.</strong></span>` : ''}
+       </div>`
+    : `<div class="bk-status stale"><span><strong>No backup of Forge has ever been taken.</strong>
+         Nothing on this server is recoverable if the database is lost.</span></div>`;
+
+  /* ---- a backup in progress -------------------------------------------- */
+  const running = d.running
+    ? `<div class="bk-status" style="display:block;">
+         <div>Backing up — <strong>${escapeHTML(d.running.stage || 'starting')}</strong>
+           ${d.running.percent === null ? '' : `${d.running.percent}%`}</div>
+         <div class="bk-prog"><span style="width:${Math.max(2, Math.min(100, Number(d.running.percent) || 2))}%"></span></div>
+         <div class="ref-note" style="margin:8px 0 0;">It keeps going if you close this page.</div>
+       </div>`
+    : '';
+
+  /* ---- the folder ------------------------------------------------------ */
+  const folder = d.storage.ok
+    ? `<div class="ref-note">Packages are written to <code>${escapeHTML(d.storage.dir || '')}</code>${
+        d.storage.freeMb === null ? '' : ` — ${escapeHTML(bkBytes(d.storage.freeBytes))} free`}.
+        ${d.storage.source === 'env' ? '' : `<strong>${escapeHTML(d.storage.envName || 'BACKUP_DIR')} is not set</strong>,
+        so this is a sensible guess rather than your choice. ${escapeHTML(d.storage.hint || '')}`}</div>`
+    : `<div class="ref-err">Backups cannot be written at the moment:<br>${
+        (d.storage.problems || []).map(pr=>escapeHTML(pr.message)).join('<br>')}</div>`;
+
+  /* ---- the list -------------------------------------------------------- */
+  const pill = (b) => {
+    if(b.status === 'verified') return '<span class="bk-pill verified">verified</span>';
+    if(b.status === 'running') return '<span class="bk-pill running">running</span>';
+    if(b.status === 'failed') return '<span class="bk-pill failed">failed</span>';
+    return '<span class="bk-pill ok">written, not verified</span>';
+  };
+  const rows = (d.backups || []).map(b=>`
+    <tr data-bk-row="${escapeHTML(b.id)}">
+      <td>${escapeHTML(bkWhen(b.createdAt))}<div style="color:var(--ink-faint);font-size:11px;">
+        ${escapeHTML(b.trigger === 'scheduled' ? 'the schedule'
+           : b.trigger === 'cli' ? 'the command line'
+           : b.trigger === 'pre-restore' ? 'taken before a restore'
+           : (b.createdByLabel || 'somebody'))}</div></td>
+      <td>${escapeHTML(bkBytes(b.size))}${b.encrypted ? '' : '<div style="color:var(--danger-ink);font-size:11px;">not encrypted</div>'}</td>
+      <td>${pill(b)}${b.error ? `<div style="color:var(--danger-ink);font-size:11px;">${escapeHTML(b.error)}</div>` : ''}</td>
+      <td class="bk-actions">
+        ${b.status === 'running' ? '' : `
+          ${canDownload && b.filename ? `<button class="btn btn-ghost btn-sm" data-bk-download="${escapeHTML(b.id)}">Download</button>` : ''}
+          ${b.filename ? `<button class="btn btn-ghost btn-sm" data-bk-verify="${escapeHTML(b.id)}">Verify</button>` : ''}
+          <button class="btn btn-ghost btn-sm" data-bk-delete="${escapeHTML(b.id)}">Delete</button>`}
+      </td>
+    </tr>`).join('');
+
+  /* ---- the schedule ---------------------------------------------------- */
+  const schErr = (f)=>{ const e = bkState.scheduleErr; return e && e.field === f ? e.message : ''; };
+  const schedule = `
+    <div class="ref-sub" style="margin-top:20px;">
+      <h4 style="margin:0 0 6px;font-size:13px;">A backup every night</h4>
+      <div class="ref-note">Off until you switch it on. Switching it on means storing a passphrase on
+        this server, which is the one thing this feature otherwise never does — so read the sentence
+        under the field before you do.</div>
+
+      <label class="bk-check" style="margin:12px 0;">
+        <input type="checkbox" id="bk_sch_on" ${sch.scheduleEnabled ? 'checked' : ''}>
+        <span>Take a backup automatically</span>
+      </label>
+
+      <div class="ref-add" style="align-items:end;">
+        <div>
+          <label for="bk_sch_freq">How often</label>
+          <select id="bk_sch_freq">
+            <option value="daily" ${sch.frequency === 'daily' ? 'selected' : ''}>Every day</option>
+            <option value="weekly" ${sch.frequency === 'weekly' ? 'selected' : ''}>Once a week</option>
+          </select>
+        </div>
+        <div id="bk_sch_daywrap" style="${sch.frequency === 'weekly' ? '' : 'display:none;'}">
+          <label for="bk_sch_day">On</label>
+          <select id="bk_sch_day">
+            ${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
+              .map((n,i)=>`<option value="${i}" ${Number(sch.weekday) === i ? 'selected' : ''}>${n}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label for="bk_sch_time">At</label>
+          <input type="time" id="bk_sch_time" value="${String(sch.hour ?? 2).padStart(2,'0')}:${String(sch.minute ?? 0).padStart(2,'0')}">
+        </div>
+        <div>
+          <label for="bk_sch_keep">Keep the newest</label>
+          <input type="number" id="bk_sch_keep" min="1" max="365" value="${Number(sch.keepLast ?? 7)}" style="width:80px;">
+          <div class="bk-hint">${schErr('keepLast') ? `<span style="color:var(--danger-ink);">${escapeHTML(schErr('keepLast'))}</span>` : 'older ones are deleted'}</div>
+        </div>
+      </div>
+
+      <div class="bk-field">
+        <label for="bk_sch_pass">The passphrase the schedule uses${sch.passphraseSet ? ' — already set' : ''}</label>
+        <input type="password" id="bk_sch_pass" autocomplete="new-password" spellcheck="false"
+          placeholder="${sch.passphraseSet ? 'leave empty to keep the one that is stored' : 'needed before the schedule can run'}">
+        <div class="bk-hint" id="bk_sch_strength"></div>
+        ${schErr('passphrase') ? `<div class="ref-err">${escapeHTML(schErr('passphrase'))}</div>` : ''}
+        <div class="bk-warn" style="margin-top:10px;">${escapeHTML((d.warnings || {}).scheduler || '')}</div>
+        ${sch.passphraseSet ? `<div class="ref-note">Set by ${escapeHTML(sch.passphraseSetBy || 'somebody')}
+          on ${escapeHTML(bkWhen(sch.passphraseSetAt))}. It is stored encrypted and is never shown again.</div>` : ''}
+        ${sch.encryptionAvailable ? '' : `<div class="ref-err">A passphrase cannot be stored on this
+          deployment: EMAIL_ENCRYPTION_KEY is not set, and this value will not be kept under
+          anything weaker. Use the command line and a cron job instead — the Backups section of the
+          README has the line.</div>`}
+      </div>
+
+      <div class="bk-field">
+        <label for="bk_sch_password">Your own password${sch.passphraseSet ? ', if you are changing the passphrase' : ''}</label>
+        <input type="password" id="bk_sch_password" autocomplete="current-password">
+        ${schErr('password') ? `<div class="ref-err">${escapeHTML(schErr('password'))}</div>` : ''}
+      </div>
+
+      ${bkState.scheduleErr && !bkState.scheduleErr.field ? `<div class="ref-err">${escapeHTML(bkState.scheduleErr.message)}</div>` : ''}
+      <div style="margin-top:12px;"><button class="btn btn-brand btn-sm" id="bk_sch_save"
+        ${bkState.busy ? 'disabled' : ''}>Save the schedule</button></div>
+    </div>`;
+
+  el.innerHTML = `
+    <div class="ref-section" id="bkSection">
+      <div class="ref-head"><h3>Backup</h3><span class="rh-badge">Super Admin</span></div>
+      <div class="ref-note">One file holding the code, the whole database, the uploaded files and the
+        configuration — enough to rebuild this installation on another server. It is encrypted with a
+        passphrase you type; nothing stores that passphrase unless you switch the nightly schedule on.</div>
+
+      ${status}
+      ${running}
+
+      <div class="bk-warn" style="margin-top:12px;">${escapeHTML((d.warnings || {}).offsite || '')}</div>
+
+      <div style="margin-top:14px;">
+        <button class="btn btn-brand" id="bk_create" ${d.running || !d.storage.ok ? 'disabled' : ''}>Take a backup now</button>
+        ${d.running ? '<span class="ref-note" style="margin-left:10px;">one is already running</span>' : ''}
+      </div>
+
+      ${folder}
+
+      ${rows ? `<table class="bk-list">
+        <thead><tr><th>Taken</th><th>Size</th><th>State</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table>`
+        : '<div class="ref-note" style="margin-top:12px;">No packages in the folder yet.</div>'}
+
+      ${canDownload ? '' : `<div class="ref-note">You can take and verify backups but not download
+        one: that needs the separate <strong>Download a backup</strong> permission, because the file
+        holds every password hash and token in the studio.</div>`}
+
+      <div class="ref-note" style="margin-top:14px;"><strong>Restoring is not on this screen.</strong>
+        It destroys everything written since the package was taken, so it is a command run over SSH
+        from the application folder — <code>npm run restore -- &lt;package&gt; --dry-run</code> first,
+        which changes nothing and prints exactly what it would do. The package carries its own
+        RESTORE.md with the full procedure.</div>
+
+      ${schedule}
+    </div>`;
+
+  wireBackupSettings();
+  bkSchedulePoll();
+}
+
+/* The progress poll: started only while a backup is actually running, stopped
+   the moment one is not. Two seconds, which is a progress bar that moves. */
+function bkSchedulePoll(){
+  const should = Boolean(bkState.data && bkState.data.running);
+  if(!should){
+    if(bkState.poll){ clearInterval(bkState.poll); bkState.poll = null; }
+    return;
+  }
+  if(bkState.poll) return;
+  bkState.poll = setInterval(async ()=>{
+    /* THE SECTION MAY HAVE GONE — somebody switched tab. Stop rather than
+       keep asking the server for a screen nobody is looking at. */
+    if(!document.getElementById('backupSection')){
+      clearInterval(bkState.poll); bkState.poll = null; return;
+    }
+    try{
+      const fresh = await api('/backups');
+      const wasRunning = Boolean(bkState.data && bkState.data.running);
+      bkState.data = fresh;
+      if(wasRunning && !fresh.running){
+        const newest = (fresh.backups || [])[0];
+        if(newest && newest.status === 'verified') showToast('The backup finished and verified.');
+        else if(newest && newest.status === 'failed') showToast(`The backup failed: ${newest.error || 'see the list'}`);
+      }
+      renderBackupSettings();
+    }catch{ /* a poll that fails changes nothing; the next one may work */ }
+  }, 2000);
+}
+
+function wireBackupSettings(){
+  const on = (id, event, fn)=>{ const node = document.getElementById(id); if(node) node.addEventListener(event, fn); };
+
+  on('bk_create', 'click', bkOpenCreate);
+
+  document.querySelectorAll('[data-bk-verify]').forEach(btn=>btn.addEventListener('click', ()=>bkVerify(btn.dataset.bkVerify)));
+  document.querySelectorAll('[data-bk-download]').forEach(btn=>btn.addEventListener('click', ()=>bkDownload(btn.dataset.bkDownload)));
+  document.querySelectorAll('[data-bk-delete]').forEach(btn=>btn.addEventListener('click', ()=>bkDelete(btn.dataset.bkDelete)));
+
+  on('bk_sch_freq', 'change', ()=>{
+    const wrap = document.getElementById('bk_sch_daywrap');
+    if(wrap) wrap.style.display = document.getElementById('bk_sch_freq').value === 'weekly' ? '' : 'none';
+  });
+  on('bk_sch_pass', 'input', ()=>{
+    const hint = document.getElementById('bk_sch_strength');
+    const got = bkStrength(document.getElementById('bk_sch_pass').value);
+    if(hint){ hint.className = `bk-hint ${got.cls}`; hint.textContent = got.text; }
+  });
+  on('bk_sch_save', 'click', bkSaveSchedule);
+}
+
+/* ---------------------------------------------------------------- create --- */
+function bkCloseCreate(){
+  const wrap = document.getElementById('bkCreateWrap');
+  if(wrap) wrap.classList.remove('show');
+  /* THE THREE PASSWORD FIELDS ARE EMPTIED, every time, whether the backup
+     started or was cancelled. They held live credentials. */
+  for(const id of ['bk_pass1','bk_pass2','bk_password']){
+    const node = document.getElementById(id);
+    if(node) node.value = '';
+  }
+  const err = document.getElementById('bk_create_err');
+  if(err) err.textContent = '';
+  const hint = document.getElementById('bk_strength');
+  if(hint){ hint.className = 'bk-hint'; hint.textContent = ''; }
+}
+
+function bkOpenCreate(){
+  const wrap = document.getElementById('bkCreateWrap');
+  if(!wrap){ showToast('This page could not open its dialog. Reload and try again.'); return; }
+  bkCloseCreate();
+  const warn = document.getElementById('bk_lostwarn');
+  if(warn) warn.textContent = ((bkState.data || {}).warnings || {}).passphrase || '';
+  const secrets = document.getElementById('bk_secrets');
+  if(secrets) secrets.checked = false;
+  wrap.classList.add('show');
+
+  const pass1 = document.getElementById('bk_pass1');
+  const hint = document.getElementById('bk_strength');
+  pass1.oninput = ()=>{
+    const got = bkStrength(pass1.value);
+    hint.className = `bk-hint ${got.cls}`;
+    hint.textContent = got.text;
+  };
+  setTimeout(()=>{ try{ pass1.focus(); }catch{} }, 0);
+
+  document.getElementById('bk_create_cancel').onclick = bkCloseCreate;
+  wrap.onclick = (e)=>{ if(e.target === wrap) bkCloseCreate(); };
+  document.getElementById('bk_create_go').onclick = bkStartCreate;
+}
+
+async function bkStartCreate(){
+  const go = document.getElementById('bk_create_go');
+  const err = document.getElementById('bk_create_err');
+  const body = {
+    passphrase: document.getElementById('bk_pass1').value,
+    passphraseConfirm: document.getElementById('bk_pass2').value,
+    password: document.getElementById('bk_password').value,
+    includeSecrets: document.getElementById('bk_secrets').checked,
+  };
+  err.textContent = '';
+  go.disabled = true;
+  const label = go.textContent;
+  go.textContent = 'Starting…';
+  try{
+    const out = await api('/backups', { method:'POST', body });
+    bkCloseCreate();
+    showToast(out.summary || 'The backup has started.');
+    /* The payload is refetched rather than patched, so the running row, the
+       status line and the list all come from one answer. */
+    bkState.data = await api('/backups');
+    renderBackupSettings();
+  }catch(e){
+    err.textContent = e.message;
+  }finally{
+    go.disabled = false;
+    go.textContent = label;
+  }
+}
+
+/* ---------------------------------------------------------------- verify --- */
+async function bkVerify(id){
+  const row = ((bkState.data || {}).backups || []).find(b=>b.id === id);
+  if(!row) return;
+  if(row.encrypted){
+    await openAsk({
+      title: 'Verify this package',
+      message: 'Reading it back means opening it, so it needs the passphrase it was made with. '
+        + 'Nothing is changed and nothing is written.',
+      input: { label: 'Passphrase', placeholder: '', value: '', password: true },
+      confirmLabel: 'Verify',
+      busyLabel: 'Reading it back…',
+      run: async (typed)=>{
+        const out = await api(`/backups/${encodeURIComponent(id)}/verify`,
+          { method:'POST', body:{ passphrase: typed } });
+        showToast(out.summary || 'It opens and it is intact.');
+        bkState.data = await api('/backups');
+        renderBackupSettings();
+      },
+    }).catch(()=>{});
+    return;
+  }
+  await openAsk({
+    title: 'Verify this package',
+    message: 'This package is not encrypted, so verifying it only reads it back and checks every '
+      + 'part against the manifest.',
+    confirmLabel: 'Verify',
+    busyLabel: 'Reading it back…',
+    run: async ()=>{
+      const out = await api(`/backups/${encodeURIComponent(id)}/verify`, { method:'POST', body:{} });
+      showToast(out.summary || 'It opens and it is intact.');
+      bkState.data = await api('/backups');
+      renderBackupSettings();
+    },
+  }).catch(()=>{});
+}
+
+/* -------------------------------------------------------------- download --- */
+/* A POST AND A BLOB, NOT A LINK. The step-up password has to reach the server,
+ * and a password in a query string lands in the access log, the browser's
+ * history and every proxy in between — so the route takes it in a body, which a
+ * download link cannot do. See the note on the route.
+ *
+ * fetch() rather than api(), because the response is a file and api() parses
+ * JSON. The error case still comes back as JSON, so that is read when the
+ * status is not ok.
+ */
+async function bkDownload(id){
+  const row = ((bkState.data || {}).backups || []).find(b=>b.id === id);
+  if(!row) return;
+  await openAsk({
+    title: 'Download this package',
+    message: `${row.filename}\n\nThis file holds every password hash, token and encrypted setting in `
+      + 'the studio. Put it somewhere only you can reach, and do not keep it beside the passphrase.',
+    input: { label: 'Your own password, to confirm it is you', value: '', password: true },
+    confirmLabel: 'Download',
+    busyLabel: 'Fetching…',
+    run: async (typed)=>{
+      const res = await fetch(`${API_BASE}/backups/${encodeURIComponent(id)}/download`, {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json', ...(state.token?{Authorization:'Bearer '+state.token}:{}) },
+        body: JSON.stringify({ password: typed }),
+      });
+      if(!res.ok){
+        let message = `The download failed (${res.status}).`;
+        try{ const body = await res.json(); if(body && body.error) message = body.error; }catch{}
+        throw new Error(message);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = row.filename || 'forge-backup';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      /* REVOKED, OR THE WHOLE PACKAGE STAYS IN MEMORY until the tab closes —
+         twenty megabytes of password hashes held for no reason. */
+      setTimeout(()=>URL.revokeObjectURL(url), 30000);
+      showToast('Downloaded. Move it off this machine and keep the passphrase elsewhere.');
+    },
+  }).catch(()=>{});
+}
+
+/* ---------------------------------------------------------------- delete --- */
+async function bkDelete(id){
+  const row = ((bkState.data || {}).backups || []).find(b=>b.id === id);
+  if(!row) return;
+  const last = (bkState.data || {}).last || {};
+  const isNewest = last.exists && row.status === 'verified'
+    && ((bkState.data.backups || []).find(b=>b.status === 'verified') || {}).id === id;
+  await openAsk({
+    title: 'Delete this package',
+    message: `${row.filename || 'this record'}\n\n`
+      + (isNewest
+        ? 'THIS IS THE NEWEST VERIFIED BACKUP. Deleting it leaves the studio with an older one, '
+          + 'or none. Take a new one first unless you have a copy somewhere else.\n\n'
+        : '')
+      + 'The file is deleted from the backup folder. Any copy you have downloaded is unaffected.',
+    confirmLabel: 'Delete it',
+    danger: true,
+    busyLabel: 'Deleting…',
+    run: async ()=>{
+      const out = await api(`/backups/${encodeURIComponent(id)}`, { method:'DELETE' });
+      showToast(out.summary || 'Deleted.');
+      bkState.data = await api('/backups');
+      renderBackupSettings();
+    },
+  }).catch(()=>{});
+}
+
+/* -------------------------------------------------------------- schedule --- */
+async function bkSaveSchedule(){
+  const time = String(document.getElementById('bk_sch_time').value || '02:00');
+  const [hour, minute] = time.split(':').map(n=>Number(n));
+  const typed = document.getElementById('bk_sch_pass').value;
+  const body = {
+    scheduleEnabled: document.getElementById('bk_sch_on').checked,
+    frequency: document.getElementById('bk_sch_freq').value,
+    weekday: Number(document.getElementById('bk_sch_day').value || 0),
+    hour: Number.isFinite(hour) ? hour : 2,
+    minute: Number.isFinite(minute) ? minute : 0,
+    keepLast: Number(document.getElementById('bk_sch_keep').value || 7),
+  };
+  /* THE PASSPHRASE IS SENT ONLY IF SOMETHING WAS TYPED. An empty field means
+     "keep the stored one", which is why it is not sent as an empty string —
+     the server would have to guess which was meant. */
+  if(typed){
+    body.passphrase = typed;
+    body.password = document.getElementById('bk_sch_password').value;
+  }
+
+  bkState.busy = true;
+  bkState.scheduleErr = null;
+  const btn = document.getElementById('bk_sch_save');
+  if(btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+  try{
+    await api('/backups/schedule', { method:'PUT', body });
+    bkState.data = await api('/backups');
+    /* THE TOAST, NOT AN INLINE LINE: renderBackupSettings() replaces this
+       section's whole markup, so an inline confirmation would be erased by the
+       re-render that follows. (The same flaw was found and fixed in the Role
+       Groups section.) */
+    showToast(body.scheduleEnabled ? 'Saved. The schedule is on.' : 'Saved. The schedule is off.');
+  }catch(err){
+    bkState.scheduleErr = { field: err.field || null, message: err.message };
+  }finally{
+    bkState.busy = false;
+    renderBackupSettings();
+  }
+}
+
 async function renderChatSettings(){
   const el = document.getElementById('chatSettingsSection');
   if(!el) return;
@@ -26426,6 +27052,13 @@ function reapplyPermissionGates({ redrawProjects = true } = {}){
    * the permission set actually moved. */
   if(state.view==='settings'){
     prSetState.data = null;
+    /* AND THE BACKUP SECTION'S, with its error and its poll: a stale `err` from
+       a fetch made before the grant would keep showing a 403 message under a
+       section the viewer may now use, and a poll left running belongs to a
+       payload that is about to be replaced. */
+    bkState.data = null;
+    bkState.err = null;
+    if(bkState.poll){ clearInterval(bkState.poll); bkState.poll = null; }
     renderSettings();
   }
   if(state.openAssetId && document.getElementById('drawer').classList.contains('show')){
