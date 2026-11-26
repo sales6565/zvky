@@ -232,15 +232,35 @@ test('the page and the CLI go through the same engine', () => {
 });
 
 test('verification is not optional: the engine reads every package back', () => {
-  const body = code('src/backup.js');
   /* `ok` MEANS "we wrote a file"; `verified` means "we read it back, the
-     passphrase opens it, and every part hashes to what the manifest says". A
-     backup in the first state is a hope, so the engine always does the second
-     before reporting success — there is no flag to skip it. */
-  assert.match(body, /verifyFile\(/, 'the engine verifies');
+   * passphrase opens it, and every part hashes to what the manifest says". A
+   * backup in the first state is a hope.
+   *
+   * THIS IS PINNED IN THE SOURCE AND NOT AT RUNTIME, which is a decision worth
+   * recording because the obvious objection is right: a test that greps is
+   * weaker than a test that runs. It is here because a run cannot tell the
+   * difference. Replacing the verification with `{ ok: true }` leaves a package
+   * that is in fact perfectly good — the engine just stopped checking — so every
+   * assertion about the file, the hash, the restore and the row still passes.
+   * That mutation survived the whole suite until this guard was narrowed.
+   *
+   * The narrowing matters too: verifyFile is DEFINED in this file and called by
+   * the route, so searching the whole file found it even when the write path no
+   * longer called it. The search is now inside runClaimed's body alone. */
+  const body = code('src/backup.js');
+  const start = body.indexOf('async function runClaimed');
+  const end = body.indexOf('function sha(buffer)');
+  const writePath = body.slice(start, end);
+  assert.ok(start !== -1 && end > start && writePath.length > 1000, 'found the write path');
+
+  assert.match(writePath, /await verifyFile\(finalPath, \{ passphrase \}\)/,
+    'the write path must read the package back before calling it verified');
+  const verifiedAt = writePath.indexOf("status = 'verified'");
+  const checkedAt = writePath.indexOf('await verifyFile(');
+  assert.ok(checkedAt !== -1 && verifiedAt > checkedAt,
+    'the row is marked verified only AFTER the package has been read back');
   assert.ok(!/skipVerify|noVerify|verify\s*=\s*false/.test(body),
-    'there must be no way to skip verification');
-  assert.match(body, /status = 'verified'/, 'and the row records that it happened');
+    'there must be no flag that skips verification');
 });
 
 /* ========================================================================== */
