@@ -767,6 +767,121 @@ async function ensureRoleGroupTables(db, log) {
   }
 }
 
+/* BACKUPS: the record of every package, and the schedule — Prompt 74.
+ *
+ * ===========================================================================
+ * TWO TABLES, AND NEITHER HOLDS A SECRET IN CLEAR.
+ *
+ * `backups` is the list the Settings screen shows and the only authority on
+ * which files in the backup folder this application created. That second job is
+ * what makes retention safe: pruning deletes files NAMED IN THIS TABLE and
+ * nothing else, so a folder the owner also keeps their own copies in cannot be
+ * swept by us.
+ *
+ * `backup_settings` is one row, id = 1, holding the schedule and the scheduler's
+ * passphrase ENCRYPTED with the strict secret mechanism (src/email-secret.js
+ * with strict: true — EMAIL_ENCRYPTION_KEY and no JWT_SECRET fallback, for the
+ * reasons that file gives). It is write-only through the API: the screen shows
+ * "set" or "not set" and nothing can read it back out.
+ *
+ * SEEDS NOTHING AND SCHEDULES NOTHING. The schedule arrives switched off, so an
+ * install that upgrades and never opens the screen takes no backups, writes no
+ * files and behaves exactly as it did before — the same promise every additive
+ * step in this file makes.
+ *
+ * THE STATUS VOCABULARY is running | ok | verified | failed, and it is a
+ * VARCHAR with a CHECK rather than an ENUM so that adding a state later is an
+ * additive migration rather than an ALTER that rewrites the table. `running` is
+ * also the lock: see claim() in src/backup.js for why a row is a better lock
+ * than a file on shared hosting, where Passenger can be restarted mid-write.
+ */
+async function ensureBackupTables(db, log) {
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS backups (
+      id           CHAR(36)     NOT NULL PRIMARY KEY,
+      filename     VARCHAR(255) NULL,
+      size_bytes   BIGINT       NULL,
+      sha256       CHAR(64)     NULL,
+      encrypted    TINYINT(1)   NOT NULL DEFAULT 1,
+      status       VARCHAR(16)  NOT NULL DEFAULT 'running',
+      error        VARCHAR(500) NULL,
+      trigger_kind VARCHAR(16)  NOT NULL DEFAULT 'manual',
+      created_by   CHAR(36)     NULL,
+      created_by_label VARCHAR(191) NULL,
+      app_version  VARCHAR(80)  NULL,
+      commit_ref   VARCHAR(80)  NULL,
+      node_version VARCHAR(40)  NULL,
+      db_version   VARCHAR(80)  NULL,
+      manifest     LONGTEXT     NULL,
+      stage        VARCHAR(32)  NULL,
+      percent      TINYINT      NULL,
+      heartbeat_at DATETIME     NULL,
+      created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      finished_at  DATETIME     NULL,
+      KEY idx_backups_created (created_at),
+      KEY idx_backups_status (status),
+      /* The one lookup retention makes: the newest N that are worth keeping. */
+      KEY idx_backups_keep (status, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  /* created_by has NO foreign key to users, and that is deliberate rather than
+     an oversight: the record of who took a backup must outlive the account.
+     Somebody leaves, their account is deleted, and the history of what was
+     taken and by whom is exactly the thing an audit needs to keep. The label
+     beside it is why the screen can still name them. */
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS backup_settings (
+      id                INT          NOT NULL PRIMARY KEY,
+      schedule_enabled  TINYINT(1)   NOT NULL DEFAULT 0,
+      frequency         VARCHAR(16)  NOT NULL DEFAULT 'daily',
+      hour              TINYINT      NOT NULL DEFAULT 2,
+      minute            TINYINT      NOT NULL DEFAULT 0,
+      weekday           TINYINT      NOT NULL DEFAULT 0,
+      keep_last         SMALLINT     NOT NULL DEFAULT 7,
+      include_secrets   TINYINT(1)   NOT NULL DEFAULT 0,
+      /* The scheduler's passphrase, encrypted. Never returned by any API; the
+         secret-filter test asserts that, and the column name is in that test's
+         list of things that must not appear in a response. */
+      passphrase_enc    TEXT         NULL,
+      passphrase_set_at DATETIME     NULL,
+      passphrase_set_by VARCHAR(191) NULL,
+      last_run_slot     VARCHAR(32)  NULL,
+      last_run_at       DATETIME     NULL,
+      updated_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      updated_by        VARCHAR(191) NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  /* ONE ROW, INSERT IGNORE: the defaults above ARE the shipped configuration,
+     and "schedule_enabled = 0" is the whole of the no-surprises promise. */
+  const { result } = await db.query(
+    'INSERT IGNORE INTO backup_settings (id, schedule_enabled) VALUES (1, 0)'
+  );
+  if (result && result.affectedRows) log('Schema: backup_settings created (schedule off, keep 7).');
+
+  /* A ROW LEFT `running` BY A PROCESS THAT IS NO LONGER HERE.
+   *
+   * Passenger stops an idle application whenever it likes, and it may do so in
+   * the middle of a backup. The row would then say "running" for ever, the lock
+   * would never clear and the screen would show a backup in progress that
+   * nothing is progressing. So every start sweeps the ones whose heartbeat has
+   * gone cold: they are marked failed, with the reason, which is both the truth
+   * and what releases the lock.
+   *
+   * TEN MINUTES rather than one: a dump of a large database legitimately goes
+   * minutes between heartbeats on a loaded shared host, and marking a live
+   * backup failed would be worse than waiting. */
+  const { result: stale } = await db.query(
+    `UPDATE backups
+        SET status = 'failed',
+            error = 'The application restarted while this backup was running.',
+            finished_at = NOW()
+      WHERE status = 'running'
+        AND (heartbeat_at IS NULL OR heartbeat_at < (NOW() - INTERVAL 10 MINUTE))`
+  );
+  if (stale && stale.affectedRows) {
+    log(`Schema: ${stale.affectedRows} backup(s) left running by a restart marked failed.`);
+  }
+}
+
 /* The email queue and the transport's health flag.
  *
  * IDEMPOTENT and seeding nothing: CREATE TABLE IF NOT EXISTS, plus one
@@ -6137,6 +6252,9 @@ const STEPS = [
   ['review pipeline', ensureReviewWorkflow],
   ['role permissions', ensurePermissionTables],
   ['role groups', ensureRoleGroupTables],
+  /* Backups: two tables, no seeds, schedule off. Its stale-row sweep runs on
+     every start, which is what releases a lock a restart left behind. */
+  ['backups', ensureBackupTables],
   ['email outbox', ensureEmailOutboxTables],
   ['asset ownership', ensureAssetOwnership],
   /* Before the client hierarchy, and before anything else adds a foreign key.

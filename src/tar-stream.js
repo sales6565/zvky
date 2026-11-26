@@ -152,11 +152,24 @@ function padding(size) {
  */
 class Pack extends Readable {
   constructor(options = {}) {
-    super({ ...options, read() {} });
+    /* NO `read` IN THE OPTIONS, and this cost an afternoon.
+     *
+     * `new Readable({ read() {} })` ASSIGNS that function to this._read,
+     * shadowing the class method below — so the drain signal never arrived,
+     * _write()'s promise never resolved, and the whole archive deadlocked the
+     * moment it grew past the 16 KB default buffer. A 14 KB smoke test passed;
+     * the first real package, 31 MB of code, hung for ever.
+     *
+     * The highWaterMark is raised because every chunk here is at least a
+     * 512-byte block and most are 64 KB file reads: a 16 KB buffer means a
+     * round trip through the event loop for each one. */
+    super({ highWaterMark: 1024 * 1024, ...options });
     this._waiting = null;
     this._finished = false;
   }
 
+  /* Called by the stream machinery when the consumer wants more: releases
+     whatever _write() is waiting on. */
   _read() {
     const w = this._waiting;
     this._waiting = null;
