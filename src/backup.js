@@ -494,6 +494,28 @@ async function runClaimed(db, id, {
     if (onProgress) onProgress({ stage, percent, detail });
   };
 
+  /* WHO ASKED FOR IT COMES FROM THE CLAIMED ROW, not from an argument.
+   *
+   * claim() has already written created_by and created_by_label; taking them as
+   * parameters here as well would be two sources for one fact, and the detached
+   * run the web layer starts would be free to disagree with the row the request
+   * created. This was found by probing rather than by reading: the first version
+   * of the split left `userId` in the manifest with nothing to bind it to, and
+   * every backup failed with "userId is not defined" — which is also why
+   * tests/backup-engine.test.js now takes one through runClaimed() directly
+   * rather than only through create().
+   */
+  const { rows: claimed } = await db.query(
+    'SELECT created_by, created_by_label FROM backups WHERE id = $1', [id]
+  );
+  if (!claimed.length) {
+    const err = new Error('That backup row no longer exists, so there is nothing to run.');
+    err.code = 'BACKUP_NO_ROW';
+    throw err;
+  }
+  const userId = claimed[0].created_by;
+  const userLabel = claimed[0].created_by_label;
+
   let here;
   try {
     ({ here } = await preflight(db, { passphrase, encrypt, env }));
@@ -742,8 +764,14 @@ async function runClaimed(db, id, {
     );
 
     /* ---- 7. prune ------------------------------------------------------ */
-    say('prune', 95, 'Removing old packages');
-    const pruned = await prune(db, { keepLast });
+    /* keepLast === false MEANS DO NOT PRUNE AT ALL, which is a different thing
+       from keepLast === null ("whatever the studio's setting says"). The CLI's
+       --no-prune needs the first; every other caller wants the second, and a
+       single null could not say both. */
+    say('prune', 95, keepLast === false ? 'Keeping every package' : 'Removing old packages');
+    const pruned = keepLast === false
+      ? { kept: null, removed: [], skipped: true }
+      : await prune(db, { keepLast });
 
     say('done', 100, 'Finished');
     await cleanup();

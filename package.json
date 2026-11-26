@@ -12,6 +12,8 @@
     "asset:check": "node scripts/check-asset.js",
     "tabs:check": "node scripts/check-tabs.js",
     "seed": "node src/seed/seed.js",
+    "backup": "node scripts/backup.js",
+    "restore": "node scripts/restore.js",
     "package": "bash scripts/build-godaddy-zip.sh",
     "sample:data": "node scripts/sample-data.js",
     "pnl:demo": "node scripts/pnl-demo-data.js",
