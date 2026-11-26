@@ -759,8 +759,29 @@ async function runClaimed(db, id, {
     const size = (await fsp.stat(finalPath)).size;
     const packageHash = outer.digest('hex');
 
+    /* THE ROW STAYS `running` UNTIL IT IS VERIFIED OR FAILED, and this is a bug
+     * fix rather than a tidy-up.
+     *
+     * It used to become `ok` here, the moment the file was written — before
+     * verification, which on a large database is the longest stage there is.
+     * Two things followed, and the second is the serious one:
+     *
+     *   The screen's progress bar vanished at 85%: running() counts rows whose
+     *   status is `running`, so a backup still being read back looked finished
+     *   and the row appeared as "written, not verified" before quietly
+     *   flipping a poll later.
+     *
+     *   THE LOCK OPENED. claim() refuses a second backup when a `running` row
+     *   exists; a row that had already become `ok` did not stop one. So for the
+     *   whole of verification a second engine could start, and on a large
+     *   studio that is minutes.
+     *
+     * The filename, size, hash and manifest are still recorded here — they are
+     * facts about a file that now exists, and a process that dies next should
+     * leave them behind. Only the status waits.
+     */
     await db.query(
-      `UPDATE backups SET filename = $1, size_bytes = $2, sha256 = $3, status = 'ok',
+      `UPDATE backups SET filename = $1, size_bytes = $2, sha256 = $3,
               manifest = $4, stage = 'verify', percent = 85, heartbeat_at = NOW(),
               db_version = $5, finished_at = NULL
         WHERE id = $6`,

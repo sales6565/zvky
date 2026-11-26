@@ -331,7 +331,7 @@ test('the backup schedule', { skip: SKIP }, async (t) => {
 
     const told = await notices();
     assert.strictEqual(told.length, 2);
-    assert.match(told[0], /never been taken/i);
+    assert.match(told[0], /has ever been taken/i);
     assert.match(told[0], /somewhere other than this server/i,
       'and it says the thing that actually matters');
   });

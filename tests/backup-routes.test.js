@@ -145,9 +145,15 @@ test('backup routes: permissions, step-up, audit, and nothing leaked', { skip: S
     assert.strictEqual(none.status, 400);
     assert.strictEqual(none.body.field, 'password');
 
+    /* 403, DELIBERATELY: the caller is signed in and holds the permission, and
+       what they failed is the confirmation. src/step-up.js gives the same
+       sentence whatever went wrong — a message that distinguished "wrong
+       password" from "no password set" would be a way to learn about an
+       account. */
     const wrong = await as('owner', '/backups', { method: 'POST',
       body: { passphrase: PASSPHRASE, passphraseConfirm: PASSPHRASE, password: 'not-it' } });
-    assert.ok(wrong.status === 400 || wrong.status === 401, `got ${wrong.status}`);
+    assert.strictEqual(wrong.status, 403, JSON.stringify(wrong.body));
+    assert.strictEqual(wrong.body.field, 'password');
 
     const list = await as('owner', '/backups');
     assert.deepStrictEqual(list.body.backups, [], 'a refused request claims no row');
@@ -223,6 +229,47 @@ test('backup routes: permissions, step-up, audit, and nothing leaked', { skip: S
     assert.strictEqual(settled.last.stale, false, 'and the screen stops being red');
   });
 
+  await t.test('a row stays "running" right through verification — the lock stays shut', async () => {
+    /* THE HOLE THIS CLOSES. The row used to become `ok` the moment the file was
+       written, before it was read back; claim() refuses a second backup only
+       while a `running` row exists, so for the whole of verification — the
+       longest stage on a large database — a second engine could start. The
+       screen lost its progress bar at the same moment, for the same reason.
+       Found because waitForQuiet() returned a row that said `ok`. */
+    const start = await as('owner', '/backups', { method: 'POST',
+      body: { passphrase: PASSPHRASE, passphraseConfirm: PASSPHRASE, password: PASSWORD } });
+    assert.strictEqual(start.status, 202);
+
+    /* Watch until the engine reaches the verify stage, then check the lock is
+       still shut and the screen still says something is happening. */
+    let sawVerify = false;
+    const until = Date.now() + 180000;
+    for (;;) {
+      const now = await api(server.base, '/backups', { token: token.owner });
+      const row = (now.body.backups || []).find((b) => b.id === start.body.id);
+      if (row && row.stage === 'verify' && row.status !== 'verified') {
+        sawVerify = true;
+        assert.strictEqual(row.status, 'running',
+          'a package being read back is still being worked on');
+        assert.ok(now.body.running, 'and the screen must still show it running');
+        const second = await as('owner', '/backups', { method: 'POST',
+          body: { passphrase: PASSPHRASE, passphraseConfirm: PASSPHRASE, password: PASSWORD } });
+        assert.strictEqual(second.status, 409, 'the lock must hold during verification');
+        break;
+      }
+      if (!now.body.running) break;             // it finished before we looked
+      if (Date.now() > until) throw new Error('the backup never reached verification');
+    }
+    await waitForQuiet();
+    /* `ok` IS NOT A STATE A FINISHED RUN LEAVES BEHIND any more: it now means
+       "written, never read back", which only a restart mid-verification
+       produces. */
+    const settled = await as('owner', '/backups');
+    assert.strictEqual(settled.body.backups.some((b) => b.status === 'ok'), false,
+      `a completed run left a row in the "ok" state: ${JSON.stringify(settled.body.backups.map((b) => b.status))}`);
+    if (!sawVerify) t.diagnostic('verification finished before the poll could catch it');
+  });
+
   await t.test('a second backup while one runs is refused with a reason', async () => {
     /* Started and immediately re-requested: the lock is claimed inside the
        first request, so the second must lose even though neither has finished. */
@@ -239,7 +286,11 @@ test('backup routes: permissions, step-up, audit, and nothing leaked', { skip: S
   await t.test('no path to the package is anywhere in any answer', async () => {
     const list = await as('owner', '/backups');
     const one = await as('owner', `/backups/${made.id}`);
-    for (const body of [list.body, one.body]) {
+    /* THE STORAGE BLOCK IS LEFT OUT OF THIS SCAN, because naming the folder is
+       its whole job — the screen has to tell an administrator where packages
+       go. Everything else must not. */
+    const { storage, ...rest } = list.body;
+    for (const body of [rest, one.body]) {
       const text = JSON.stringify(body);
       assert.strictEqual(text.includes(dir), false, 'the folder path is the server\'s business');
       assert.ok(!/"path"\s*:/.test(text), 'no row carries a path');
@@ -288,9 +339,18 @@ test('backup routes: permissions, step-up, audit, and nothing leaked', { skip: S
        step-up password has to travel in a body: in a query string it would
        land in the access log, the browser history and every proxy between. A
        GET that quietly worked would put it back there. */
-    const asGet = await raw(server.base, `/backups/${made.id}/download?password=${encodeURIComponent(PASSWORD)}`,
-      { token: token.owner });
-    assert.notStrictEqual(asGet.status, 200, 'there must be no GET download');
+    const asGet = await fetch(
+      `${server.base}/backups/${made.id}/download?password=${encodeURIComponent(PASSWORD)}`,
+      { headers: { Authorization: `Bearer ${token.owner}` } });
+    /* THE STATUS IS NOT THE TEST. This application serves its own page from the
+       same origin, so a GET that matches no API route falls through to the
+       catch-all and comes back 200 with index.html — the trap the api() helper
+       in public/index.html carries a long note about. What matters is that no
+       package comes back. */
+    assert.notStrictEqual(asGet.headers.get('content-type'), 'application/octet-stream',
+      'a GET must not serve the package');
+    const page = Buffer.from(await asGet.arrayBuffer());
+    assert.ok(page.length < made.size / 10, 'and must not serve anything package-sized');
 
     const noPassword = await raw(server.base, `/backups/${made.id}/download`,
       { method: 'POST', token: token.owner, body: {} });
@@ -298,7 +358,7 @@ test('backup routes: permissions, step-up, audit, and nothing leaked', { skip: S
 
     const wrong = await raw(server.base, `/backups/${made.id}/download`,
       { method: 'POST', token: token.owner, body: { password: 'not-it' } });
-    assert.ok(wrong.status === 400 || wrong.status === 401, `got ${wrong.status}`);
+    assert.strictEqual(wrong.status, 403, 'signed in, holds the key, failed the confirmation');
   });
 
   await t.test('the file comes back whole, with the headers that keep it out of caches', async () => {

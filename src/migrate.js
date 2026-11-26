@@ -880,12 +880,31 @@ async function ensureBackupTables(db, log) {
    * TEN MINUTES rather than one: a dump of a large database legitimately goes
    * minutes between heartbeats on a loaded shared host, and marking a live
    * backup failed would be worse than waiting. */
+  /* A ROW WITH A FILE IS NOT THE SAME AS A ROW WITHOUT ONE, and calling both
+     "failed" threw away a usable package. The row stays `running` right through
+     verification now, so a restart can catch one whose file is written, hashed
+     and recorded — and never read back. That is exactly what `ok` means:
+     written, not verified. The owner can press Verify on it, or take a fresh
+     one; what they must not be told is that it does not exist. */
+  const { result: unverified } = await db.query(
+    `UPDATE backups
+        SET status = 'ok',
+            error = 'The application restarted before this backup could be read back. '
+                    || 'The file is there and its hash was recorded; press Verify to check it.',
+            finished_at = NOW()
+      WHERE status = 'running' AND filename IS NOT NULL
+        AND (heartbeat_at IS NULL OR heartbeat_at < (NOW() - INTERVAL 10 MINUTE))`
+  );
+  if (unverified && unverified.affectedRows) {
+    log(`Schema: ${unverified.affectedRows} backup(s) written but never verified before a restart.`);
+  }
+
   const { result: stale } = await db.query(
     `UPDATE backups
         SET status = 'failed',
             error = 'The application restarted while this backup was running.',
             finished_at = NOW()
-      WHERE status = 'running'
+      WHERE status = 'running' AND filename IS NULL
         AND (heartbeat_at IS NULL OR heartbeat_at < (NOW() - INTERVAL 10 MINUTE))`
   );
   if (stale && stale.affectedRows) {
