@@ -251,7 +251,7 @@ async function main() {
 main()
   .then(async (code) => { await db.end().catch(() => {}); process.exit(code); })
   .catch(async (err) => {
-    process.stderr.write(`${err.message}\n`);
+    process.stderr.write(`${process.env.BACKUP_DEBUG ? err.stack : err.message}\n`);
     await db.end().catch(() => {});
     process.exit(1);
   });

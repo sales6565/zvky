@@ -323,6 +323,7 @@ async function main() {
       return 1;
     }
     const db = require('../src/db');
+    let lastSafetyStage = null;
     try {
       const safety = await backup.create(db, {
         passphrase,
@@ -332,7 +333,14 @@ async function main() {
         userId: null,
         userLabel: `the restore command, before overwriting ${target.database}`,
         dbConfig: { ...target.config, database: target.database },
-        onProgress: ({ stage, percent }) => say(`  ${String(percent).padStart(3)}%  ${stage}`),
+        /* ONE LINE PER STAGE, not per percent: this output goes to a terminal
+           somebody is watching during an emergency, and fifty identical
+           "database" lines scroll the thing they need off the screen. */
+        onProgress: ({ stage, percent }) => {
+          if (stage === lastSafetyStage) return;
+          lastSafetyStage = stage;
+          say(`  ${String(percent).padStart(3)}%  ${stage}`);
+        },
       });
       say(`  ${safety.filename} (${MB(safety.size)}), verified.`);
       say('  IT IS ENCRYPTED WITH THE SAME PASSPHRASE AS THE PACKAGE YOU ARE RESTORING.');
@@ -489,6 +497,11 @@ async function main() {
 main()
   .then((code) => process.exit(code))
   .catch((err) => {
-    process.stderr.write(`${err.stack || err.message}\n`);
+    /* THE MESSAGE, NOT THE STACK. Every refusal this script raises is a
+       sentence written for the person reading it — a passphrase file other
+       accounts can read, a database that does not exist — and a stack trace
+       above it buries the sentence. RESTORE_DEBUG=1 brings the stack back for
+       whoever is working on this file. */
+    process.stderr.write(`${process.env.RESTORE_DEBUG ? err.stack : err.message}\n`);
     process.exit(1);
   });
