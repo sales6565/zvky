@@ -469,19 +469,12 @@ async function usersWithPermission(db, key, { activeOnly = true } = {}) {
     for (const row of rows) found.set(row.id, row);
   }
 
-  /* THE THIRD ROUTE. Wrapped because a deployment whose migration has not yet
+  /* THE THIRD ROUTE, ASKED OF THE MODULE THAT OWNS THOSE TABLES rather than
+     joined here. Wrapped because a deployment whose migration has not yet
      created role_group_users must still notify the people it can name. */
   try {
-    const { rows } = await db.query(
-      `SELECT DISTINCT u.id, u.\`name\`, u.email, u.\`role\`
-         FROM role_group_users gu
-         JOIN users u ON u.id = gu.user_id
-         JOIN role_group_permissions gp ON gp.group_id = gu.group_id
-        WHERE gp.permission_key = $1 ${activeOnly ? 'AND u.is_active = 1' : ''}
-        ORDER BY u.\`name\``,
-      [key]
-    );
-    for (const row of rows) if (!found.has(row.id)) found.set(row.id, row);
+    const direct = await require('./role-groups').usersGrantedDirectly(db, key, { activeOnly });
+    for (const row of direct) if (!found.has(row.id)) found.set(row.id, row);
   } catch { /* not migrated: the role-based half above stands */ }
 
   return [...found.values()].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));

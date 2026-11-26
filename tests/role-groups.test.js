@@ -162,7 +162,16 @@ const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'set
 
      AND IT DOES NOT GRANT READING THE VALUE. Nothing reads it back, at any
      permission level: there is no route that unseals it. */
-  'settings.default_password'];
+  'settings.default_password',
+  /* THE TWO BACKUP KEYS. Both Super Admin only, and two rather than one because
+     they are different risks: taking a backup produces a file on a server the
+     studio already controls, while downloading one produces a copy of every
+     password hash, every API token and every encrypted setting in the studio,
+     on a laptop, for ever. An office manager who runs the Friday backup is not
+     necessarily somebody who may carry that home, and a single key could not
+     express the difference. Both are marked dangerous and both ask for the
+     account's own password again at the moment of the action. */
+  'backup.manage', 'backup.download'];
 
 /* THE KEYS THAT ARE DELIBERATELY NOT SUPER-ADMIN-ONLY, listed separately so
  * each exception is argued rather than hidden in the list above.

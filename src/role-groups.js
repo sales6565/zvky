@@ -137,6 +137,33 @@ async function grantsForUser(db, userId) {
   return new Set(rows.map((r) => r.permission_key).filter((k) => catalog.isPermission(k)));
 }
 
+/* EVERYBODY WHO HOLDS ONE KEY THROUGH A DIRECT MEMBERSHIP — the other direction
+ * of grantsForUser(), asked once over the group tables rather than per user.
+ *
+ * IT LIVES HERE BECAUSE THIS MODULE OWNS THESE TABLES. src/role-permissions.js
+ * needs the answer for usersWithPermission(), and its first version simply
+ * wrote the join itself — which tests/role-group-users.test.js caught at once:
+ * "the union is computed in one place" pins that nothing outside this file
+ * reads role_group_users, because a second query over the group tables is a
+ * second answer to "what may this person do", and the day the grant rule
+ * changes only one of them follows.
+ *
+ * THE GRANT RULE IS grantsForUser()'s, exactly: an inactive account is a
+ * membership that grants nothing. Said once, here, in both directions.
+ */
+async function usersGrantedDirectly(db, key, { activeOnly = true } = {}) {
+  const { rows } = await db.query(
+    `SELECT DISTINCT u.id, u.\`name\`, u.email, u.\`role\`
+       FROM role_group_users gu
+       JOIN users u ON u.id = gu.user_id
+       JOIN role_group_permissions gp ON gp.group_id = gu.group_id
+      WHERE gp.permission_key = $1 ${activeOnly ? 'AND u.is_active = 1' : ''}
+      ORDER BY u.\`name\``,
+    [key]
+  );
+  return rows;
+}
+
 /* WHICH GROUPS THIS PERSON IS IN DIRECTLY, by name — for the user detail panel
  * and for the diagnostic, both of which report rather than decide.
  *
@@ -687,7 +714,7 @@ async function audit(db, limit = 100) {
 
 module.exports = {
   KINDS, KIND_LABELS, NAME_MAX, DESCRIPTION_MAX, NEVER_GRANTABLE, MANAGE_KEY,
-  grantable, grantsForRole, grantsForUser, groupsForUser, inheritanceForRole,
+  grantable, grantsForRole, grantsForUser, usersGrantedDirectly, groupsForUser, inheritanceForRole,
   list, get, impactOfDeleting,
   create, rename, remove, setRoles, setUsers, setPermissions, forgetRole, audit,
   validateName, validateKind, validatePermissions, validateRoles, validateUsers,
