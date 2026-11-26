@@ -226,8 +226,28 @@ async function writeCodeArchive(target) {
       const child = require('node:child_process').spawn(
         'git', ['archive', '--format=tar', 'HEAD'], { cwd: APP_DIR, stdio: ['ignore', 'pipe', 'ignore'] }
       );
+      /* THE LISTENER GOES ON BEFORE ANYTHING IS AWAITED, and this is a bug
+       * rather than a style preference.
+       *
+       * `await pipeline(...)` and then `new Promise(r => child.on('close', r))`
+       * loses the race whenever git finishes before the pipeline's own
+       * callbacks have run: 'close' has already fired, the listener is added to
+       * an event that will never come again, and the await never returns. The
+       * backup then sits at 60% for ever — no CPU, no open files, no error —
+       * holding the lock until the heartbeat sweep marks it failed ten minutes
+       * later.
+       *
+       * It is a race, so it does not reproduce on demand: the CLI ran four
+       * times in a row without it and the test suite hit it on about the
+       * eighth backup, which is how it was found at all. Registering the
+       * listener at spawn time means the event cannot be missed.
+       */
+      const closed = new Promise((resolve, reject) => {
+        child.once('error', reject);
+        child.once('close', resolve);
+      });
       await pipeline(child.stdout, out);
-      const code = await new Promise((resolve) => child.on('close', resolve));
+      const code = await closed;
       if (code === 0) {
         const st = await fsp.stat(target);
         if (st.size > 0) return { method: 'git-archive' };
@@ -239,25 +259,29 @@ async function writeCodeArchive(target) {
   const pack = new tar.Pack();
   const out = fs.createWriteStream(target);
   const done = pipeline(pack, out);
-  (async () => {
+  /* BOTH HALVES AWAITED TOGETHER. The feeder used to be a floating async IIFE:
+     when the sink failed first, its rejection had nobody listening and became
+     an unhandled rejection rather than this function's error. */
+  const feed = (async () => {
+    const walk = async (dir, rel) => {
+      const entries = await fsp.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+        if (CODE_EXCLUDE.has(entry.name) || CODE_EXCLUDE.has(childRel)) continue;
+        const abs = path.join(dir, entry.name);
+        if (entry.isDirectory()) await walk(abs, childRel);
+        else if (entry.isFile()) await pack.addFile(childRel, abs);
+      }
+    };
     try {
-      const walk = async (dir, rel) => {
-        const entries = await fsp.readdir(dir, { withFileTypes: true });
-        for (const entry of entries) {
-          const childRel = rel ? `${rel}/${entry.name}` : entry.name;
-          if (CODE_EXCLUDE.has(entry.name) || CODE_EXCLUDE.has(childRel)) continue;
-          const abs = path.join(dir, entry.name);
-          if (entry.isDirectory()) await walk(abs, childRel);
-          else if (entry.isFile()) await pack.addFile(childRel, abs);
-        }
-      };
       await walk(APP_DIR, '');
       pack.finish();
     } catch (err) {
       pack.destroy(err);
+      throw err;
     }
   })();
-  await done;
+  await Promise.all([done, feed]);
   return { method: 'folder-tar' };
 }
 
