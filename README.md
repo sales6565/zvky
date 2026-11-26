@@ -2505,6 +2505,12 @@ Set:
   two servers. Generated and persisted to `dist-mobile/.dist-token` otherwise
 - `MOBILE_DIST_DIR` — optional; where the built `.apk`, `.ipa` and manifest live.
   Defaults to `dist-mobile/` beside the application
+- `BACKUP_DIR` — where backup packages are written. **Set this explicitly and
+  put it outside the application folder**, for the same reason as
+  `CHAT_UPLOAD_DIR`: a cPanel deploy replaces the application folder, so a
+  backup kept inside it is destroyed by exactly the event that makes you need
+  it. The app refuses that folder, and refuses a temp directory, rather than
+  writing there. See [Backups](#backups)
 
 ## 5. Install and seed
 
@@ -7406,6 +7412,199 @@ Worth knowing when deciding: that rationale was written when Pending Actions hel
 project review workflow. It now also carries game feedback waiting on a lead, so the
 audience for the tab has widened even though the default has not.
 
+## Backups
+
+One command, one file, everything in it:
+
+```bash
+npm run backup
+```
+
+That writes a single package into `BACKUP_DIR` holding **the code, the whole
+database, the uploaded files and the configuration** — enough to rebuild this
+installation on another server. It is encrypted by default, it is read back and
+checked against its own manifest before the command reports success, and it is
+the same engine the **Settings → Backup** screen uses, so the two cannot drift
+apart.
+
+### What is in the package
+
+| Part | What it is |
+| --- | --- |
+| `manifest.json` | Every other part, with its SHA-256 and byte count, plus the versions of Forge, Node and MariaDB it came from. |
+| `database/dump.sql` | The whole schema and all the data, taken inside one consistent snapshot, with views, triggers and routines. Written from ordinary `SELECT`s, not by `mysqldump`, because a cPanel host may not have the client tools. |
+| `code/app.tar` | The deployed code, from `git archive` where the folder is a clean checkout, otherwise from the folder itself. |
+| `files/uploads/…` | Review files and spreadsheet imports. |
+| `files/chat/…` | Chat attachments, from wherever `CHAT_UPLOAD_DIR` points. |
+| `files/mobile/…` | The built mobile applications. |
+| `config/environment.json` | Which configuration variables are **set**, and the non-secret ones' values. No secret value is ever in here. |
+| `RESTORE.md` | The procedure, written into the package, so it travels with the file. |
+| `secrets.enc` | Only when asked for. See below. |
+
+### What is NOT in it, and why
+
+- **`node_modules`** — reinstalled with `npm ci` from the lockfile, which is in
+  the package. Smaller, and safer than copying compiled binaries between
+  machines.
+- **The backup folder itself**, logs and temporary files.
+- **`.env`** — the environment secrets are in your own records, not in a file
+  that is also the thing an attacker would most like to have. If you are moving
+  the studio to a new server and want them anyway, `npm run backup -- --secrets`
+  adds `secrets.enc`, encrypted inside the package with the same passphrase.
+- **THE PROJECT FILES ON THE OFFICE SERVER.** Forge has never stored them. It
+  stores *links* to a share your own file server owns, reached through the
+  gateway. Nothing in this package restores a single frame of artwork, and
+  nothing in it was ever going to. **Back that share up separately, with
+  whatever your IT already uses for that machine.**
+- **The gateway's own configuration** on the office server, for the same
+  reason: it belongs to that machine and is backed up with it.
+
+### The passphrase
+
+You type it when the backup is taken and it is **never stored anywhere** — not
+in the database, not in the package, not in the log, not in the activity record.
+
+> **If the passphrase is lost the backup cannot be opened. By anybody, including
+> us. There is no recovery, no reset and no support route.**
+
+Keep it in the studio's password manager, and keep it somewhere other than
+beside the backups: a passphrase in a text file next to the package is the same
+as no encryption at all. The one exception is the nightly schedule, which
+cannot ask anybody for a passphrase at two in the morning, so it stores one —
+see below, and read what that costs you before switching it on.
+
+### Where to keep them
+
+**A backup kept only on this server is not a safe backup.** The disk, the
+account and the host are the three things most likely to take the application
+and its backups together, and all three of them hold both. Download each
+package and put it somewhere else — another machine, another provider, a drive
+in the office.
+
+### Taking one by hand
+
+From the **Settings → Backup** screen, or over SSH:
+
+```bash
+npm run backup                                   # asks for the passphrase, twice
+npm run backup -- --passphrase-file ~/.forge-pass  # reads it from a file (chmod 600)
+npm run backup -- --secrets                      # include the environment secrets
+npm run backup -- --keep 14                      # and prune to the newest 14
+npm run backup -- --json                         # for a monitor
+```
+
+There is deliberately **no `--passphrase` flag**: a command line is visible to
+every account on the server through `ps`. Type it, or put it in a file only your
+account can read.
+
+`npm run backup -- --no-encrypt` exists for one honest case — moving a studio to
+a new server down a private channel — and it asks you to type the word
+`unencrypted` first. An unencrypted package holds every password hash, token and
+encrypted setting in the studio in a file anyone who can read the folder can
+open, and the manifest records that it is unencrypted. There is no way to
+produce one from the web page, on purpose.
+
+### Every night, automatically
+
+Two ways, and **use one or the other, not both** — together they would write two
+packages a night.
+
+**The in-app schedule**, in Settings → Backup. It is off until you switch it on,
+and switching it on means storing a passphrase on this server, encrypted under
+`EMAIL_ENCRYPTION_KEY`. That is weaker than a passphrase only you know — the key
+to the nightly packages then lives on the same machine as the packages — and far
+better than no backups at all. Backups you take by hand keep the stronger
+property. The schedule is claimed in the database before any work starts, so two
+Passenger processes cannot both take tonight's backup, and a failure raises an
+in-app notice to everybody holding **Take and manage backups**.
+
+**A cron job**, which is the better choice on a host that suspends an idle
+application, because a suspended application runs no timers. In cPanel → Cron
+Jobs, one line:
+
+```
+cd /home/<cpanel-account>/forge && /usr/bin/node scripts/backup.js --passphrase-file /home/<cpanel-account>/.forge-backup-pass >> /home/<cpanel-account>/logs/forge-backup.log 2>&1
+```
+
+…at `0 2 * * *`, or whenever suits. The passphrase file must be `chmod 600` and
+**outside** the application folder, so a deploy cannot replace it and the web
+server cannot serve it. The command exits 0 for a verified package and non-zero
+for anything else, which is what makes it usable by a monitor.
+
+### Checking you are actually backed up
+
+```bash
+npm run backup:check          # exit 0 if you are, 1 if you are not
+npm run backup:check -- --json
+```
+
+It reports the folder, the free space, the age of the last verified package and
+whether the schedule can actually run. It reads nothing from inside a package,
+so it needs no passphrase. `GET /api/health` carries a short version of the same
+answer for an uptime monitor.
+
+### Restoring
+
+**There is no restore button, and that is deliberate.** Taking a backup is safe;
+restoring one destroys everything written since the package was taken, with no
+undo, and the person doing it is by definition having the worst day of the year.
+A web page cannot ask for that safely — it cannot prove who is at the keyboard
+beyond a password stored in the database it is about to replace, and the first
+thing a restore needs is for the application to stop, which would end the
+request. So it is a command, which needs the server, the passphrase and the
+file:
+
+```bash
+npm run restore -- /path/to/backup-….tar.gz.enc --dry-run
+```
+
+**Always run `--dry-run` first.** It verifies the manifest and every hash,
+decrypts the package, prints exactly what it would do and what the package does
+not contain, and changes nothing.
+
+Then, without `--dry-run`:
+
+```bash
+npm run restore -- <package> [--passphrase-file <path>] [--target-db <name>] [--force]
+```
+
+- It restores into an **empty** database. If the target already has tables it
+  refuses, and tells you so.
+- `--force` allows it anyway — and **takes a full backup of that database
+  first**, automatically, before dropping anything. If that pre-restore backup
+  fails, the restore does not happen.
+- `--target-db <name>` restores alongside the live database instead, which is
+  how you test a package without betting the studio on it.
+- Files under `files/` are written back into their own folders; an entry whose
+  name tries to climb out of its folder is refused rather than sanitised.
+- `--code-to <dir>` writes `app.tar` out, and `--secrets-to <dir>` decrypts
+  `secrets.enc`; neither is unpacked over the running application.
+
+Afterwards it prints the checklist of what a person still has to do: unpack the
+code and `npm ci`, set the environment variables, start the application so
+`src/migrate.js` brings the schema up to date, restore the office file server's
+share from its own backup, and then actually log in and look at a project, a
+timesheet week and a chat attachment.
+
+One thing that looks wrong and is not: the restored `backups` table holds the
+package's own row frozen as `running`, because a backup cannot contain its own
+completion. The next start marks it failed with "the application restarted while
+this backup was running". That row *is* the backup you restored from.
+
+### Who may do any of this
+
+Two permissions, both marked as dangerous and both **Super Admin only** out of
+the box:
+
+| Permission | What it allows |
+| --- | --- |
+| **Take and manage backups** (`backup.manage`) | The Settings section: take one, verify one, delete one, set the schedule. |
+| **Download a backup** (`backup.download`) | Pull the package off the server. Separate, because the file holds every password hash and token in the studio — being allowed to *take* a backup is not the same as being allowed to *carry one home*. |
+
+Every action asks for the account's own password again before it runs, and every
+one is written to the Activity Log. Neither the passphrase nor its length is
+ever recorded.
+
 ## Passwords
 
 Rules live in [`src/password-policy.js`](src/password-policy.js) and are served
@@ -7619,4 +7818,8 @@ on the host. See [DEPLOY-GODADDY.md](DEPLOY-GODADDY.md).
   shared default password.
 - Add a migrations tool once you need to evolve the schema instead of
   hand-editing `sql/schema.sql`.
-- Back up the database. This is now the single source of truth for the studio.
+- Back up the studio, not just the database — and keep a copy off this server.
+  `npm run backup` and [Backups](#backups) cover the code, the database, the
+  uploaded files and the configuration in one encrypted package; the project
+  files on the office share are backed up separately, by whoever looks after
+  that machine.

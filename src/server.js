@@ -364,6 +364,29 @@ app.get('/api/version', (req, res) => {
   res.json(require('./build-info').current());
 });
 
+/* The backup half of /api/health. Never throws: a deployment whose migration
+   has not yet created the table is a deployment whose health endpoint must
+   still answer, and "cannot tell" is a truthful answer where a 503 is not. */
+async function backupHealth(db) {
+  try {
+    const last = await require('./backup').lastGood(db);
+    const stale = !last.exists || last.ageDays >= 7;
+    return {
+      ok: !stale,
+      exists: last.exists,
+      at: last.exists ? last.at : null,
+      ageDays: last.exists ? last.ageDays : null,
+      sizeMb: last.exists ? Math.floor(Number(last.size) / 1048576) : null,
+      staleAfterDays: 7,
+      ...(stale ? { hint: last.exists
+        ? 'The last verified backup is more than a week old. Settings → Backup, or npm run backup.'
+        : 'This installation has never been backed up. Settings → Backup, or npm run backup.' } : {}),
+    };
+  } catch {
+    return { ok: null, checked: false, hint: 'The backups table could not be read on this database.' };
+  }
+}
+
 app.get('/api/health', async (req, res) => {
   const db = require('./db');
   try {
@@ -396,6 +419,14 @@ app.get('/api/health', async (req, res) => {
                 + 'Most often the database user lacks ALTER or CREATE — grant those and restart, or apply the matching statements from sql/schema.sql by hand.',
             }
             : { complete: true }),
+      /* IS IT BACKED UP? On the one URL that already answers "is this
+         installation healthy", because a studio whose database is fine and
+         whose last backup was in August is not healthy — it is one disk away
+         from having nothing. Unauthenticated like the rest of this endpoint,
+         so it says WHEN and HOW BIG and nothing else: no folder, no file name,
+         no schedule. scripts/check-backup.js is the full version, and it runs
+         on the server where those details are already visible. */
+      backup: await backupHealth(db),
       ...(seeded ? {} : {
         hint: 'No accounts exist yet. Run "npm run seed", or — if you have no shell on this host — '
           + 'set BOOTSTRAP_TOKEN in the environment and POST it to /api/auth/bootstrap.',

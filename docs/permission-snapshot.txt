@@ -6,7 +6,7 @@
 # A deliberate change to anybody's visibility is made by regenerating this
 # file, so it lands in the diff where a reviewer will see it.
 #
-# roles: 60   routes: 309
+# roles: 60   routes: 316
 
 ## PAGE ELEMENTS  (UI_GATES, read from public/index.html)
 
@@ -54,6 +54,7 @@ section settings.project_categories := Project Categories
 section settings.milestone_types := Milestone Types
 section settings.roles := Roles
 section settings.default_password := Password reset
+section backup.manage := Backup
 section settings.ip_allowlist := IP Allowlist
 section settings.ip_blocklist := IP Blocklist
 section settings.email_config := Email Configuration
@@ -64,7 +65,7 @@ section settings.chat_activity := Chat Activity
 section mobile.distribute := Mobile Apps
 
 ## ROLE super_admin
-keys(153): asset.add asset.assign asset.assign_any asset.bulk_assign asset.bulk_upload asset.delete asset.edit asset.hold asset.hold_any asset.lead_notes asset.override_stage assets.rename chat.group_create chat.group_manage_any chat.message_protected chat.open_inbox chat.settings chat.settings_view chat.use client.add client.close client.delete client.edit client.view followup.mark_idle followup.mark_leave followup.mark_onsight followup.mark_past_dates history.view history.view_others integration.flag_tech_art integration.send_to_dev integration.send_to_tech_art integration.view_ingame leave.approve leave.manage_all leave.request leave.view_team mobile.distribute outsource.deliver outsource.manage outsource.rates outsource.reopen outsource.view pending.view pnl.actual pnl.fixed pnl.manage project.add project.close project.delete project.edit project.milestones project.review_mine project.review_queue project.review_respond project.review_send project.view report.admin_dashboard report.artist_report report.follow_up report.idle report.remind report.view review.approve_client review.cd review.client_deliver review.client_return review.client_send review.client_view review.deliver review.tl review.tl_feedback review.tl_send_client server.browse_all server.download server.manage_requests server.request_delete server.submit_upload server.upload server.view server.view_audit settings.activity_log settings.asset_rename settings.asset_types settings.audit_logs settings.branding settings.branding_view settings.categories settings.chat_activity settings.chat_retention settings.chat_retention_view settings.default_password settings.email_config settings.email_config_view settings.email_delivery settings.email_delivery_view settings.holidays settings.holidays_view settings.integrations settings.integrations_view settings.ip_allowlist settings.ip_allowlist_view settings.ip_blocklist settings.ip_blocklist_view settings.leave.manage settings.leave.view settings.milestone_types settings.mis_access settings.mis_access_view settings.nudges settings.nudges_view settings.permissions settings.permissions_view settings.priorities settings.project_categories settings.recording_hours settings.recording_hours_view settings.reference_view settings.role_groups settings.role_groups_view settings.roles settings.roles_view settings.server.manage settings.server.view settings.theme settings.theme_view settings.working_hours settings.working_hours_view timesheet.all timesheet.backdate timesheet.export timesheet.min_hours_exempt timesheet.options timesheet.options_view timesheet.own timesheet.project_meeting timesheet.sub_options timesheet.team timesheet.tl_action timesheet.unlock_day user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.deactivate user.delete user.edit user.idle_view user.reset_password user.view user.view_team
+keys(155): asset.add asset.assign asset.assign_any asset.bulk_assign asset.bulk_upload asset.delete asset.edit asset.hold asset.hold_any asset.lead_notes asset.override_stage assets.rename backup.download backup.manage chat.group_create chat.group_manage_any chat.message_protected chat.open_inbox chat.settings chat.settings_view chat.use client.add client.close client.delete client.edit client.view followup.mark_idle followup.mark_leave followup.mark_onsight followup.mark_past_dates history.view history.view_others integration.flag_tech_art integration.send_to_dev integration.send_to_tech_art integration.view_ingame leave.approve leave.manage_all leave.request leave.view_team mobile.distribute outsource.deliver outsource.manage outsource.rates outsource.reopen outsource.view pending.view pnl.actual pnl.fixed pnl.manage project.add project.close project.delete project.edit project.milestones project.review_mine project.review_queue project.review_respond project.review_send project.view report.admin_dashboard report.artist_report report.follow_up report.idle report.remind report.view review.approve_client review.cd review.client_deliver review.client_return review.client_send review.client_view review.deliver review.tl review.tl_feedback review.tl_send_client server.browse_all server.download server.manage_requests server.request_delete server.submit_upload server.upload server.view server.view_audit settings.activity_log settings.asset_rename settings.asset_types settings.audit_logs settings.branding settings.branding_view settings.categories settings.chat_activity settings.chat_retention settings.chat_retention_view settings.default_password settings.email_config settings.email_config_view settings.email_delivery settings.email_delivery_view settings.holidays settings.holidays_view settings.integrations settings.integrations_view settings.ip_allowlist settings.ip_allowlist_view settings.ip_blocklist settings.ip_blocklist_view settings.leave.manage settings.leave.view settings.milestone_types settings.mis_access settings.mis_access_view settings.nudges settings.nudges_view settings.permissions settings.permissions_view settings.priorities settings.project_categories settings.recording_hours settings.recording_hours_view settings.reference_view settings.role_groups settings.role_groups_view settings.roles settings.roles_view settings.server.manage settings.server.view settings.theme settings.theme_view settings.working_hours settings.working_hours_view timesheet.all timesheet.backdate timesheet.export timesheet.min_hours_exempt timesheet.options timesheet.options_view timesheet.own timesheet.project_meeting timesheet.sub_options timesheet.team timesheet.tl_action timesheet.unlock_day user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.deactivate user.delete user.edit user.idle_view user.reset_password user.view user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -108,6 +109,7 @@ settings sections:
   settings.milestone_types=yes
   settings.roles=yes
   settings.default_password=yes
+  backup.manage=yes
   settings.ip_allowlist=yes
   settings.ip_blocklist=yes
   settings.email_config=yes
@@ -125,6 +127,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = yes
   DELETE /api/branding/favicon = yes
   DELETE /api/branding/logo = yes
   DELETE /api/chat/:id/members/:userId = yes
@@ -203,6 +206,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = yes
+  POST /api/backups/:id/download = yes
+  POST /api/backups/:id/verify = yes
   POST /api/branding/favicon = yes
   POST /api/branding/logo = yes
   POST /api/chat/:id/leave = yes
@@ -279,6 +285,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = yes
   PUT /api/admin/settings/recording-hours/:id = yes
   PUT /api/admin/settings/timesheet = yes
+  PUT /api/backups/schedule = yes
   PUT /api/branding = yes
   PUT /api/branding/schedule = yes
   PUT /api/email-config = yes
@@ -338,6 +345,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -355,6 +363,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -433,6 +442,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -509,6 +521,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -568,6 +581,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -585,6 +599,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -663,6 +678,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -739,6 +757,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -798,6 +817,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -815,6 +835,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -893,6 +914,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -969,6 +993,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -1028,6 +1053,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -1045,6 +1071,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -1123,6 +1150,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -1199,6 +1229,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -1258,6 +1289,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -1275,6 +1307,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -1353,6 +1386,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -1429,6 +1465,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -1488,6 +1525,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -1505,6 +1543,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -1583,6 +1622,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -1659,6 +1701,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -1718,6 +1761,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -1735,6 +1779,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -1813,6 +1858,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -1889,6 +1937,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -1948,6 +1997,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -1965,6 +2015,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -2043,6 +2094,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -2119,6 +2173,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -2178,6 +2233,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -2195,6 +2251,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -2273,6 +2330,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -2349,6 +2409,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -2408,6 +2469,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -2425,6 +2487,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -2503,6 +2566,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -2579,6 +2645,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -2638,6 +2705,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -2655,6 +2723,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -2733,6 +2802,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -2809,6 +2881,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -2868,6 +2941,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -2885,6 +2959,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -2963,6 +3038,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -3039,6 +3117,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -3098,6 +3177,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -3115,6 +3195,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -3193,6 +3274,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -3269,6 +3353,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -3328,6 +3413,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -3345,6 +3431,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -3423,6 +3510,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -3499,6 +3589,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -3558,6 +3649,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -3575,6 +3667,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -3653,6 +3746,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -3729,6 +3825,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -3788,6 +3885,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -3805,6 +3903,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -3883,6 +3982,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -3959,6 +4061,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -4018,6 +4121,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -4035,6 +4139,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -4113,6 +4218,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -4189,6 +4297,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -4248,6 +4357,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -4265,6 +4375,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -4343,6 +4454,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -4419,6 +4533,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -4478,6 +4593,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -4495,6 +4611,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -4573,6 +4690,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -4649,6 +4769,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -4708,6 +4829,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -4725,6 +4847,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -4803,6 +4926,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -4879,6 +5005,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -4938,6 +5065,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -4955,6 +5083,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -5033,6 +5162,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -5109,6 +5241,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -5168,6 +5301,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -5185,6 +5319,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -5263,6 +5398,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -5339,6 +5477,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -5398,6 +5537,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -5415,6 +5555,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -5493,6 +5634,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -5569,6 +5713,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -5628,6 +5773,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -5645,6 +5791,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -5723,6 +5870,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -5799,6 +5949,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -5858,6 +6009,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -5875,6 +6027,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -5953,6 +6106,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -6029,6 +6185,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -6088,6 +6245,7 @@ settings sections:
   settings.milestone_types=yes
   settings.roles=yes
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -6105,6 +6263,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = yes
   DELETE /api/branding/logo = yes
   DELETE /api/chat/:id/members/:userId = yes
@@ -6183,6 +6342,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = yes
   POST /api/branding/logo = yes
   POST /api/chat/:id/leave = yes
@@ -6259,6 +6421,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = yes
   PUT /api/branding/schedule = yes
   PUT /api/email-config = no
@@ -6318,6 +6481,7 @@ settings sections:
   settings.milestone_types=yes
   settings.roles=yes
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -6335,6 +6499,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = yes
   DELETE /api/branding/logo = yes
   DELETE /api/chat/:id/members/:userId = yes
@@ -6413,6 +6578,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = yes
   POST /api/branding/logo = yes
   POST /api/chat/:id/leave = yes
@@ -6489,6 +6657,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = yes
   PUT /api/branding/schedule = yes
   PUT /api/email-config = no
@@ -6548,6 +6717,7 @@ settings sections:
   settings.milestone_types=yes
   settings.roles=yes
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -6565,6 +6735,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = yes
   DELETE /api/branding/logo = yes
   DELETE /api/chat/:id/members/:userId = yes
@@ -6643,6 +6814,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = yes
   POST /api/branding/logo = yes
   POST /api/chat/:id/leave = yes
@@ -6719,6 +6893,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = yes
   PUT /api/branding/schedule = yes
   PUT /api/email-config = no
@@ -6778,6 +6953,7 @@ settings sections:
   settings.milestone_types=yes
   settings.roles=yes
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -6795,6 +6971,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = yes
   DELETE /api/branding/logo = yes
   DELETE /api/chat/:id/members/:userId = yes
@@ -6873,6 +7050,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = yes
   POST /api/branding/logo = yes
   POST /api/chat/:id/leave = yes
@@ -6949,6 +7129,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = yes
   PUT /api/branding/schedule = yes
   PUT /api/email-config = no
@@ -7008,6 +7189,7 @@ settings sections:
   settings.milestone_types=yes
   settings.roles=yes
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -7025,6 +7207,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = yes
   DELETE /api/branding/logo = yes
   DELETE /api/chat/:id/members/:userId = yes
@@ -7103,6 +7286,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = yes
   POST /api/branding/logo = yes
   POST /api/chat/:id/leave = yes
@@ -7179,6 +7365,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = yes
   PUT /api/branding/schedule = yes
   PUT /api/email-config = no
@@ -7238,6 +7425,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -7255,6 +7443,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -7333,6 +7522,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -7409,6 +7601,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -7468,6 +7661,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -7485,6 +7679,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -7563,6 +7758,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -7639,6 +7837,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -7698,6 +7897,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -7715,6 +7915,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -7793,6 +7994,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -7869,6 +8073,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -7928,6 +8133,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -7945,6 +8151,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -8023,6 +8230,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -8099,6 +8309,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -8158,6 +8369,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -8175,6 +8387,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -8253,6 +8466,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -8329,6 +8545,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -8388,6 +8605,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -8405,6 +8623,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -8483,6 +8702,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -8559,6 +8781,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -8618,6 +8841,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -8635,6 +8859,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -8713,6 +8938,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -8789,6 +9017,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -8848,6 +9077,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -8865,6 +9095,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -8943,6 +9174,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -9019,6 +9253,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -9078,6 +9313,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -9095,6 +9331,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -9173,6 +9410,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -9249,6 +9489,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -9308,6 +9549,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -9325,6 +9567,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -9403,6 +9646,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -9479,6 +9725,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -9538,6 +9785,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -9555,6 +9803,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -9633,6 +9882,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -9709,6 +9961,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -9768,6 +10021,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -9785,6 +10039,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -9863,6 +10118,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -9939,6 +10197,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -9998,6 +10257,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -10015,6 +10275,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -10093,6 +10354,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -10169,6 +10433,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -10228,6 +10493,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -10245,6 +10511,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -10323,6 +10590,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -10399,6 +10669,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -10458,6 +10729,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -10475,6 +10747,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -10553,6 +10826,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -10629,6 +10905,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -10688,6 +10965,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -10705,6 +10983,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -10783,6 +11062,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -10859,6 +11141,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -10918,6 +11201,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -10935,6 +11219,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -11013,6 +11298,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -11089,6 +11377,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -11148,6 +11437,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -11165,6 +11455,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -11243,6 +11534,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -11319,6 +11613,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -11378,6 +11673,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -11395,6 +11691,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -11473,6 +11770,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -11549,6 +11849,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -11608,6 +11909,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -11625,6 +11927,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -11703,6 +12006,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -11779,6 +12085,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -11838,6 +12145,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -11855,6 +12163,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -11933,6 +12242,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -12009,6 +12321,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -12068,6 +12381,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -12085,6 +12399,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -12163,6 +12478,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -12239,6 +12557,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -12298,6 +12617,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -12315,6 +12635,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -12393,6 +12714,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -12469,6 +12793,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -12528,6 +12853,7 @@ settings sections:
   settings.milestone_types=yes
   settings.roles=yes
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -12545,6 +12871,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = yes
   DELETE /api/branding/logo = yes
   DELETE /api/chat/:id/members/:userId = yes
@@ -12623,6 +12950,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = yes
   POST /api/branding/logo = yes
   POST /api/chat/:id/leave = yes
@@ -12699,6 +13029,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = yes
   PUT /api/branding/schedule = yes
   PUT /api/email-config = no
@@ -12758,6 +13089,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -12775,6 +13107,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -12853,6 +13186,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -12929,6 +13265,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -12988,6 +13325,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -13005,6 +13343,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -13083,6 +13422,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -13159,6 +13501,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -13218,6 +13561,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -13235,6 +13579,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -13313,6 +13658,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -13389,6 +13737,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -13448,6 +13797,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -13465,6 +13815,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -13543,6 +13894,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -13619,6 +13973,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
@@ -13678,6 +14033,7 @@ settings sections:
   settings.milestone_types=no
   settings.roles=no
   settings.default_password=no
+  backup.manage=no
   settings.ip_allowlist=no
   settings.ip_blocklist=no
   settings.email_config=no
@@ -13695,6 +14051,7 @@ write routes:
   DELETE /api/assets/:id = conditional
   DELETE /api/assets/:id/thumbnail = conditional
   DELETE /api/assets/tasks/:id = conditional
+  DELETE /api/backups/:id = no
   DELETE /api/branding/favicon = no
   DELETE /api/branding/logo = no
   DELETE /api/chat/:id/members/:userId = yes
@@ -13773,6 +14130,9 @@ write routes:
   POST /api/auth/password = conditional
   POST /api/auth/push-preference = conditional
   POST /api/auth/tour-seen = conditional
+  POST /api/backups = no
+  POST /api/backups/:id/download = no
+  POST /api/backups/:id/verify = no
   POST /api/branding/favicon = no
   POST /api/branding/logo = no
   POST /api/chat/:id/leave = yes
@@ -13849,6 +14209,7 @@ write routes:
   PUT /api/admin/settings/password-reset/default = no
   PUT /api/admin/settings/recording-hours/:id = no
   PUT /api/admin/settings/timesheet = no
+  PUT /api/backups/schedule = no
   PUT /api/branding = no
   PUT /api/branding/schedule = no
   PUT /api/email-config = no
