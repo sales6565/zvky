@@ -263,6 +263,37 @@ test('verification is not optional: the engine reads every package back', () => 
     'there must be no flag that skips verification');
 });
 
+test('the git-archive close listener is registered before anything is awaited', () => {
+  /* A RACE CANNOT BE CAUGHT BY RUNNING THE CODE, which is why this is here and
+   * not in the engine suite.
+   *
+   * `await pipeline(...)` followed by `new Promise(r => child.on('close', r))`
+   * hangs for ever whenever git finishes first: the event has already fired and
+   * the listener is waiting for one that will never come again. The backup then
+   * sits at 60% with no CPU, no open files and no error, holding the lock until
+   * the heartbeat sweep gives up ten minutes later.
+   *
+   * It is a race. The CLI ran four times in a row without reproducing it and
+   * the engine suite hit it on about the eighth backup; reintroducing the bug
+   * as a mutation did NOT fail a run, which is exactly what one would expect
+   * and exactly why a running test is the wrong instrument. What can be stated
+   * with certainty is the ORDER, so that is what is pinned. */
+  const body = code('src/backup.js');
+  const fn = body.slice(body.indexOf('async function writeCodeArchive'),
+    body.indexOf('async function hashFile'));
+  assert.ok(fn.length > 400, 'found writeCodeArchive');
+  const spawnAt = fn.indexOf('.spawn(');
+  const listenAt = fn.indexOf("child.once('close'");
+  const awaitAt = fn.indexOf('await pipeline(child.stdout');
+  assert.ok(spawnAt !== -1 && listenAt !== -1 && awaitAt !== -1,
+    'the spawn, the close listener and the pipeline are all there');
+  assert.ok(listenAt > spawnAt && listenAt < awaitAt,
+    'the close listener must go on between the spawn and the first await, or git '
+    + 'finishing first deadlocks the backup for ever');
+  assert.ok(!/child\.on\('close'/.test(fn),
+    'a late child.on(close) is the shape of the bug this guards');
+});
+
 /* ========================================================================== */
 /* 5. THE TWO PERMISSIONS                                                     */
 /* ========================================================================== */
