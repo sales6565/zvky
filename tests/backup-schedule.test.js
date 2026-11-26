@@ -225,8 +225,29 @@ test('the backup schedule', { skip: SKIP }, async (t) => {
        this — a sequential loop would pass against a broken guard, because the
        first one would finish before the second looked. */
     const before = (await conn.query("SELECT COUNT(*) c FROM backups WHERE trigger_kind='scheduled'"))[0][0].c;
+    /* A BARRIER, AND WITHOUT IT THIS TEST PROVES LESS THAN IT LOOKS LIKE IT DOES.
+     *
+     * Node takes a couple of hundred milliseconds to start. Four children
+     * spawned in a loop therefore reach the scheduler hundreds of milliseconds
+     * apart, and by then the first has already written last_run_slot — so the
+     * other three stand down at due(), never reaching claimSlot at all. The
+     * conditional UPDATE inside claimSlot is what guards the remaining window:
+     * the few milliseconds between reading the slot and claiming it, in which
+     * two processes can both believe it is free.
+     *
+     * A mutation removing that conditional survived this test twice before the
+     * barrier was added, because the test never got two processes into that
+     * window. Now each child connects, loads, and then spins until a shared
+     * wall-clock instant before calling tick(), so all four hit the read and
+     * the claim together. */
+    const goAt = Date.now() + 2500;
     const code = "const db=require('./src/db');"
-      + `require('./src/backup-scheduler').tick(db,{now:new Date(${JSON.stringify(AT(6))})})`
+      + `const go=${goAt};`
+      /* The module is loaded and the pool is warm BEFORE the barrier, so what
+         races is the scheduler's own read-then-claim and not four cold starts. */
+      + "const s=require('./src/backup-scheduler');"
+      + "db.query('SELECT 1').then(()=>{while(Date.now()<go){}"
+      + `return s.tick(db,{now:new Date(${JSON.stringify(AT(6))})});})`
       + '.then(async(r)=>{console.log(JSON.stringify(r));await db.end();})'
       + '.catch(async(e)=>{console.log(JSON.stringify({error:e.message}));await db.end();})';
     const { execFile } = require('node:child_process');
